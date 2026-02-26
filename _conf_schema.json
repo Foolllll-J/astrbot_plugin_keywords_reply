@@ -2,11 +2,29 @@
     "whitelist": {
         "description": "白名单用户",
         "type": "list",
-        "hint": "只有白名单用户或管理员可以管理关键词/检测词。可填写用户 ID 列表。",
+        "hint": "只有白名单用户或管理员可以管理关键词/检测词。",
         "default": [],
         "items": {
             "type": "string"
         }
+    },
+    "notify_permission_denied": {
+        "description": "无权限时发送提醒",
+        "type": "bool",
+        "hint": "关闭后，无权限用户执行受限命令时将静默忽略，不再发送“权限不足”提示。",
+        "default": true
+    },
+    "allow_group_member_list_keywords": {
+        "description": "允许群成员查看关键词列表",
+        "type": "bool",
+        "hint": "开启后，非管理员/非白名单用户可在群聊使用“查看关键词列表”，仅显示当前群已启用的关键词，不显示回复内容。",
+        "default": false
+    },
+    "allow_group_member_list_detects": {
+        "description": "允许群成员查看检测词列表",
+        "type": "bool",
+        "hint": "开启后，非管理员/非白名单用户可在群聊使用“查看检测词列表”，仅显示当前群已启用的检测词，不显示回复内容。",
+        "default": false
     },
     "quote_reply": {
         "description": "引用回复",
@@ -20,6 +38,12 @@
         "hint": "定义几秒后撤回消息。格式：\"关键词延迟 检测词延迟\"。默认 \"0 0\" 表示不撤回。注意：超过 120 秒需要 bot 具有管理员权限。",
         "default": "0 0"
     },
+    "case_sensitive": {
+        "description": "是否大小写敏感",
+        "type": "bool",
+        "hint": "针对非正则的关键词/检测词匹配（含按内容查找）是否区分大小写。",
+        "default": false
+    },
     "cooldown": {
         "description": "检测词触发冷却时间（秒）",
         "type": "int",
@@ -32,10 +56,10 @@
         "type": "bool",
         "default": false
     },
-    "case_sensitive": {
-        "description": "是否大小写敏感",
+    "enable_text_template": {
+        "description": "启用文本变量模板",
         "type": "bool",
-        "hint": "针对检测词匹配时是否区分大小写。",
-        "default": false
+        "hint": "开启后，回复文本中的变量会按触发上下文替换。支持 {user_id} {user_name} {group_id} {self_id} {platform} {message} {date} {time} {datetime}。",
+        "default": true
     }
 }

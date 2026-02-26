@@ -1,6 +1,6 @@
 name: astrbot_plugin_keywords_reply
 display_name: 关键词回复
 desc: 支持图文回复、正则匹配关键词和灵活管理的关键词回复插件。
-version: v1.1.0
+version: v1.2.0
 author: Foolllll
 repo: https://github.com/Foolllll-J/astrbot_plugin_keywords_reply

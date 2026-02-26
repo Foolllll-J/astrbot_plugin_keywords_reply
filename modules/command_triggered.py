@@ -8,23 +8,61 @@ class CommandTriggeredModule:
     def __init__(self, plugin):
         self.plugin = plugin
         self.data_key = "command_triggered"
+        self._cache_version = -1
+        self._exact_index_cs = {}
+        self._exact_index_ci = {}
+        self._regex_indices = []
+
+    def _permission_denied_result(self, event: AstrMessageEvent, message: str = "权限不足。"):
+        return self.plugin._permission_denied_result(event, message)
+
+    def _is_enabled_in_group(self, cfg: dict, group_id: str) -> bool:
+        if not cfg.get("enabled", True):
+            return False
+        mode = cfg.get("mode", "whitelist")
+        groups = cfg.get("groups", [])
+        if mode == "whitelist":
+            return group_id in groups
+        return group_id not in groups
+
+    def _keyword_equals(self, left: str, right: str, is_regex: bool = False) -> bool:
+        """关键词内容比较：仅对非正则关键词应用 case_sensitive 配置。"""
+        if is_regex or self.plugin.config.get("case_sensitive", False):
+            return left == right
+        return left.lower() == right.lower()
+
+    def _ensure_match_index(self):
+        if self._cache_version == self.plugin.data_version:
+            return
+
+        self._exact_index_cs = {}
+        self._exact_index_ci = {}
+        self._regex_indices = []
+        data = self.plugin.data[self.data_key]
+        for idx, cfg in enumerate(data):
+            keyword = cfg.get("keyword")
+            if not keyword:
+                continue
+            if cfg.get("regex", False):
+                self._regex_indices.append(idx)
+                continue
+            self._exact_index_cs.setdefault(keyword, []).append(idx)
+            self._exact_index_ci.setdefault(keyword.lower(), []).append(idx)
+
+        self._cache_version = self.plugin.data_version
 
     def _match_keyword(self, text, keyword_cfg):
         keyword = keyword_cfg["keyword"]
         is_regex = keyword_cfg.get("regex", False)
-        case_sensitive = self.plugin.config.get("case_sensitive", False)
-        
-        flags = 0
-        if not case_sensitive:
-            flags = re.IGNORECASE
-            
+
         if is_regex:
-            try:
-                return re.fullmatch(keyword, text, flags)
-            except Exception as e:
-                logger.error(f"正则表达式匹配错误 (关键词: {keyword}): {e}")
+            # 正则模式不受全局 case_sensitive 配置影响，大小写由正则本身控制。
+            compiled = self.plugin._get_compiled_regex(self.data_key, keyword, 0)
+            if compiled is None:
                 return False
+            return compiled.fullmatch(text) is not None
         else:
+            case_sensitive = self.plugin.config.get("case_sensitive", False)
             if not case_sensitive:
                 text = text.lower()
                 keyword = keyword.lower()
@@ -40,28 +78,45 @@ class CommandTriggeredModule:
             
         potential_cmd = msg_str.split()[0]
         group_id = event.get_group_id()
-        
-        for cfg in self.plugin.data[self.data_key]:
-            if self._match_keyword(potential_cmd, cfg):
-                if not cfg.get("enabled", True):
-                    continue
-                
-                mode = cfg.get("mode", "whitelist")
-                groups = cfg.get("groups", [])
-                
-                if group_id:
-                    if mode == "whitelist":
-                        if group_id not in groups:
-                            continue
-                    else: # blacklist
-                        if group_id in groups:
-                            continue
-                
-                logger.info(f"关键词触发: {potential_cmd} (来自: {event.get_sender_id()})")
-                if not cfg["entries"]:
-                    return None
-                entry = random.choice(cfg["entries"])
-                return self.plugin._get_reply_result(event, entry, use_quote=True)
+
+        self._ensure_match_index()
+        case_sensitive = self.plugin.config.get("case_sensitive", False)
+        candidate_indices = []
+        if case_sensitive:
+            candidate_indices.extend(self._exact_index_cs.get(potential_cmd, []))
+        else:
+            candidate_indices.extend(self._exact_index_ci.get(potential_cmd.lower(), []))
+        candidate_indices.extend(self._regex_indices)
+
+        checked = set()
+        data = self.plugin.data[self.data_key]
+        for idx in sorted(candidate_indices):
+            if idx in checked:
+                continue
+            checked.add(idx)
+            cfg = data[idx]
+            if cfg.get("regex", False) and not self._match_keyword(potential_cmd, cfg):
+                continue
+
+            if not cfg.get("enabled", True):
+                continue
+
+            mode = cfg.get("mode", "whitelist")
+            groups = cfg.get("groups", [])
+
+            if group_id:
+                if mode == "whitelist":
+                    if group_id not in groups:
+                        continue
+                else: # blacklist
+                    if group_id in groups:
+                        continue
+
+            logger.info(f"关键词触发: {potential_cmd} (来自: {event.get_sender_id()})")
+            if not cfg["entries"]:
+                return None
+            entry = random.choice(cfg["entries"])
+            return self.plugin._get_reply_result(event, entry, use_quote=True)
         return None
 
     def _find_indices(self, param: str) -> list[int]:
@@ -87,7 +142,7 @@ class CommandTriggeredModule:
 
         indices = []
         for i, cfg in enumerate(data):
-            if cfg['keyword'] == param:
+            if self._keyword_equals(cfg["keyword"], param, cfg.get("regex", False)):
                 indices.append(i)
         
         return indices
@@ -118,7 +173,9 @@ class CommandTriggeredModule:
 
     async def add_item(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
 
         full_text = event.message_str.strip()
@@ -168,7 +225,14 @@ class CommandTriggeredModule:
             yield event.plain_result("回复内容不能为空。")
             return
 
-        keyword_cfg = next((item for item in self.plugin.data[self.data_key] if item["keyword"] == keyword), None)
+        keyword_cfg = next(
+            (
+                item
+                for item in self.plugin.data[self.data_key]
+                if self._keyword_equals(item["keyword"], keyword, item.get("regex", False))
+            ),
+            None,
+        )
         
         current_group_id = event.get_group_id()
         is_group = event.get_platform_name() != "private"
@@ -202,14 +266,16 @@ class CommandTriggeredModule:
             }
             self.plugin.data[self.data_key].append(keyword_cfg)
 
-        self.plugin._save_data()
+        await self.plugin._save_data_async()
         logger.info(f"添加关键词: {keyword} (操作者: {event.get_sender_id()})")
         
         yield event.plain_result(f"成功操作关键词: {keyword}\n{status_msg}")
 
     async def edit_item(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("只有管理员可以执行此操作。")
+            denied = self._permission_denied_result(event, "只有管理员或白名单用户可以执行此操作。")
+            if denied:
+                yield denied
             return
             
         msg_parts = event.message_str.strip().split()
@@ -250,7 +316,7 @@ class CommandTriggeredModule:
             old_keyword = self.plugin.data[self.data_key][idx]["keyword"]
             self.plugin.data[self.data_key][idx]["keyword"] = new_keyword
             self.plugin.data[self.data_key][idx]["regex"] = is_regex
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"编辑关键词: {old_keyword} -> {new_keyword} (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"关键词 '{old_keyword}' 已修改为 '{new_keyword}'。")
         else:
@@ -258,7 +324,9 @@ class CommandTriggeredModule:
 
     async def del_items(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
             
         parts = event.message_str.strip().split(None, 1)
@@ -280,7 +348,7 @@ class CommandTriggeredModule:
                 cfg = self.plugin.data[self.data_key].pop(idx)
                 deleted_keywords.append(cfg['keyword'])
             
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"删除关键词: {', '.join(deleted_keywords)} (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"关键词 '{', '.join(deleted_keywords)}' 已删除。")
         except Exception as e:
@@ -289,7 +357,9 @@ class CommandTriggeredModule:
 
     async def toggle_groups(self, event: AstrMessageEvent, enable: bool):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
             
         parts = event.message_str.strip().split()
@@ -374,11 +444,34 @@ class CommandTriggeredModule:
                     groups_str = ", ".join(args)
                     cfg["enabled"] = True
 
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"修改关键词群聊限制: {cfg['keyword']} -> {cmd_name} {groups_str} (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"关键词 '{cfg['keyword']}' {cmd_name} 群聊: {groups_str}")
 
     async def list_items(self, event):
+        if not self.plugin._is_admin(event):
+            allow_group_users = self.plugin.config.get("allow_group_member_list_keywords", False)
+            group_id = event.get_group_id()
+            if not allow_group_users or not group_id:
+                denied = self._permission_denied_result(event)
+                if denied:
+                    yield denied
+                return
+
+            enabled_keywords = [
+                cfg.get("keyword", "")
+                for cfg in self.plugin.data[self.data_key]
+                if cfg.get("keyword") and self._is_enabled_in_group(cfg, group_id)
+            ]
+            res = f"当前群聊({group_id})启用的关键词:\n"
+            if not enabled_keywords:
+                res += "无"
+            else:
+                for i, keyword in enumerate(enabled_keywords, 1):
+                    res += f"{i}. {keyword}\n"
+            yield event.plain_result(res.strip())
+            return
+
         res = "关键词列表:\n"
         if not self.plugin.data[self.data_key]:
             res += "无\n"
@@ -412,6 +505,12 @@ class CommandTriggeredModule:
         yield event.plain_result(res.strip())
 
     async def view_item(self, event: AstrMessageEvent):
+        if not self.plugin._is_admin(event):
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
+            return
+
         parts = event.message_str.strip().split()
         if len(parts) < 2:
             yield event.plain_result("用法: /查看关键词 <序号或关键词内容>")
@@ -460,7 +559,7 @@ class CommandTriggeredModule:
                     continue
 
                 intro += "回复详情：\n\u200b"
-                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False)
+                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False, render_template=False)
                 if res_obj and res_obj.chain:
                     res_obj.chain.insert(0, Plain(intro))
                     yield res_obj
@@ -494,6 +593,12 @@ class CommandTriggeredModule:
                 yield event.plain_result(res.strip())
 
     async def view_reply(self, event: AstrMessageEvent):
+        if not self.plugin._is_admin(event):
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
+            return
+
         parts = event.message_str.strip().split()
         if len(parts) < 2:
             yield event.plain_result("用法: /查看关键词回复 <关键词序号/内容> [回复序号]")
@@ -533,7 +638,7 @@ class CommandTriggeredModule:
                     yield event.plain_result(intro)
                     return
 
-                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False)
+                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False, render_template=False)
                 if res_obj and res_obj.chain:
                     res_obj.chain.insert(0, Plain(intro))
                     yield res_obj
@@ -547,7 +652,9 @@ class CommandTriggeredModule:
 
     async def add_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
 
         full_text = event.message_str.strip()
@@ -576,13 +683,15 @@ class CommandTriggeredModule:
 
         processed_entry = await self.plugin._process_entry_images(entry)
         cfg["entries"].append(processed_entry)
-        self.plugin._save_data()
+        await self.plugin._save_data_async()
         
         yield event.plain_result(f"已为关键词 '{cfg['keyword']}' 添加新回复（当前共有 {len(cfg['entries'])} 个回复）。")
 
     async def edit_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
 
         # 格式: /编辑关键词回复 [关键词ID/内容] [回复序号] [新内容]
@@ -667,7 +776,7 @@ class CommandTriggeredModule:
             processed_entry = await self.plugin._process_entry_images(entry)
             cfg["entries"][reply_idx] = processed_entry
             
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"编辑关键词回复: {cfg['keyword']} (序号 {reply_idx+1}) (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"已更新关键词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复。")
 
@@ -677,7 +786,9 @@ class CommandTriggeredModule:
 
     async def delete_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
             
         parts = event.message_str.strip().split()
@@ -713,7 +824,7 @@ class CommandTriggeredModule:
                 keyword_cfg["entries"].pop(reply_idx)
                 keyword = keyword_cfg["keyword"]
                 
-                self.plugin._save_data()
+                await self.plugin._save_data_async()
                 logger.info(f"删除关键词回复: {keyword} 序号 {idx+1}, 回复序号 {reply_idx+1} (操作者: {event.get_sender_id()})")
                 yield event.plain_result(f"已删除关键词 '{keyword}' 的第 {reply_idx+1} 个回复。")
             else:

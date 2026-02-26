@@ -8,11 +8,12 @@ import re
 import aiohttp
 import hashlib
 import asyncio
+from datetime import datetime
 
 from .modules.command_triggered import CommandTriggeredModule
 from .modules.auto_detect import AutoDetectModule
 
-@register("astrbot_plugin_keywords_reply", "Foolllll", "支持图文回复、正则匹配关键词和灵活管理的关键词回复插件。", "v1.1.0", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
+@register("astrbot_plugin_keywords_reply", "Foolllll", "支持图文回复、正则匹配关键词和灵活管理的关键词回复插件。", "v1.2.0", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
 class KeywordsReplyPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -23,10 +24,21 @@ class KeywordsReplyPlugin(Star):
         
         os.makedirs(self.image_dir, exist_ok=True)
         
-        self.data = self._load_data()
+        self._save_lock = asyncio.Lock()
+        self._regex_cache = {}
+        self.data = self._normalize_data(self._load_data())
+        self.data_version = 1
         self.cmd_module = CommandTriggeredModule(self)
         self.detect_module = AutoDetectModule(self)
         
+    def _normalize_data(self, data: dict) -> dict:
+        """确保数据结构完整，避免旧版本数据缺字段导致异常。"""
+        if not isinstance(data, dict):
+            return {"command_triggered": [], "auto_detect": []}
+        data.setdefault("command_triggered", [])
+        data.setdefault("auto_detect", [])
+        return data
+
     def _load_data(self):
         if os.path.exists(self.data_file):
             try:
@@ -36,12 +48,108 @@ class KeywordsReplyPlugin(Star):
                 logger.error(f"加载关键词数据失败: {e}")
         return {"command_triggered": [], "auto_detect": []}
 
+    async def _save_data_async(self):
+        tmp_file = f"{self.data_file}.tmp"
+        async with self._save_lock:
+            self.data_version += 1
+            self._regex_cache.clear()
+            try:
+                payload = json.dumps(self.data, ensure_ascii=False, indent=2)
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    f.write(payload)
+                os.replace(tmp_file, self.data_file)
+            except Exception as e:
+                logger.error(f"保存关键词数据失败: {e}")
+                try:
+                    if os.path.exists(tmp_file):
+                        os.remove(tmp_file)
+                except Exception:
+                    pass
+                return
+
+        self._cleanup_unused_images()
+
     def _save_data(self):
+        """兼容旧调用，建议在协程中改用 _save_data_async。"""
         try:
-            with open(self.data_file, 'w', encoding='utf-8') as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2)
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._save_data_async())
+        except RuntimeError:
+            asyncio.run(self._save_data_async())
+
+    def _collect_referenced_images(self) -> set[str]:
+        refs = set()
+        for section in ("command_triggered", "auto_detect"):
+            for cfg in self.data.get(section, []):
+                for entry in cfg.get("entries", []):
+                    for image in entry.get("images", []):
+                        path = image.get("path")
+                        if path:
+                            refs.add(os.path.basename(path))
+        return refs
+
+    def _cleanup_unused_images(self):
+        """清理不再被任何词条引用的本地图片。"""
+        try:
+            referenced = self._collect_referenced_images()
+            removed = 0
+            for name in os.listdir(self.image_dir):
+                full_path = os.path.join(self.image_dir, name)
+                if not os.path.isfile(full_path):
+                    continue
+                if name not in referenced:
+                    os.remove(full_path)
+                    removed += 1
+            if removed > 0:
+                logger.info(f"已清理未引用图片: {removed} 个")
         except Exception as e:
-            logger.error(f"保存关键词数据失败: {e}")
+            logger.error(f"清理未引用图片失败: {e}")
+
+    def _permission_denied_result(self, event: AstrMessageEvent, message: str = "权限不足。"):
+        if self.config.get("notify_permission_denied", True):
+            return event.plain_result(message)
+        return None
+
+    def _get_compiled_regex(self, scope: str, pattern: str, flags: int = 0):
+        cache_key = (scope, pattern, flags)
+        compiled = self._regex_cache.get(cache_key)
+        if compiled is not None:
+            return compiled
+        try:
+            compiled = re.compile(pattern, flags)
+            self._regex_cache[cache_key] = compiled
+            return compiled
+        except Exception as e:
+            logger.error(f"正则表达式编译失败 ({scope}: {pattern}): {e}")
+            return None
+
+    def _build_template_context(self, event: AstrMessageEvent) -> dict:
+        now = datetime.now()
+        sender_name = ""
+        try:
+            sender_name = event.get_sender_name() or ""
+        except Exception:
+            sender_name = ""
+        return {
+            "user_id": str(event.get_sender_id() or ""),
+            "user_name": sender_name,
+            "group_id": str(event.get_group_id() or ""),
+            "self_id": str(event.get_self_id() or ""),
+            "platform": str(event.get_platform_name() or ""),
+            "message": event.message_str or "",
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M:%S"),
+            "datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+    def _render_template_text(self, event: AstrMessageEvent, text: str) -> str:
+        if not text:
+            return text
+        if not self.config.get("enable_text_template", True):
+            return text
+        context = self._build_template_context(event)
+        pattern = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+        return pattern.sub(lambda m: str(context.get(m.group(1), m.group(0))), text)
 
     async def _download_image(self, url: str) -> str:
         try:
@@ -61,8 +169,8 @@ class KeywordsReplyPlugin(Star):
     def _is_admin(self, event: AstrMessageEvent):
         if event.is_admin():
             return True
-        sender_id = event.get_sender_id()
-        whitelist = self.config.get("whitelist", [])
+        sender_id = str(event.get_sender_id())
+        whitelist = {str(uid) for uid in self.config.get("whitelist", [])}
         return sender_id in whitelist
 
     def _parse_message_to_entry(self, components):
@@ -100,7 +208,7 @@ class KeywordsReplyPlugin(Star):
         entry["images"] = processed_images
         return entry
 
-    def _get_reply_result(self, event: AstrMessageEvent, entry: dict, use_quote: bool = False):
+    def _get_reply_result(self, event: AstrMessageEvent, entry: dict, use_quote: bool = False, render_template: bool = True):
         try:
             chain = []
             
@@ -108,7 +216,10 @@ class KeywordsReplyPlugin(Star):
                 chain.append(Reply(id=event.message_obj.message_id))
             
             if entry.get("text"):
-                chain.append(Plain(entry["text"]))
+                text = entry["text"]
+                if render_template:
+                    text = self._render_template_text(event, text)
+                chain.append(Plain(text))
             
             for img in entry.get("images", []):
                 path = img.get("path")

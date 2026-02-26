@@ -11,22 +11,36 @@ class AutoDetectModule:
         self.data_key = "auto_detect"
         self._last_triggered = {}
 
+    def _permission_denied_result(self, event: AstrMessageEvent, message: str = "权限不足。"):
+        return self.plugin._permission_denied_result(event, message)
+
+    def _keyword_equals(self, left: str, right: str, is_regex: bool = False, case_sensitive: bool = False) -> bool:
+        """检测词内容比较：仅对非正则检测词应用大小写配置。"""
+        if is_regex or case_sensitive:
+            return left == right
+        return left.lower() == right.lower()
+
+    def _is_enabled_in_group(self, cfg: dict, group_id: str) -> bool:
+        if not cfg.get("enabled", True):
+            return False
+        mode = cfg.get("mode", "whitelist")
+        groups = cfg.get("groups", [])
+        if mode == "whitelist":
+            return group_id in groups
+        return group_id not in groups
+
     def _match_keyword(self, text, keyword_cfg):
         keyword = keyword_cfg["keyword"]
         is_regex = keyword_cfg.get("regex", False)
-        case_sensitive = keyword_cfg.get("case_sensitive", self.plugin.config.get("case_sensitive", False))
-        
-        flags = 0
-        if not case_sensitive:
-            flags = re.IGNORECASE
-            
+
         if is_regex:
-            try:
-                return re.search(keyword, text, flags)
-            except Exception as e:
-                logger.error(f"正则表达式检测错误 (关键词: {keyword}): {e}")
+            # 正则模式不受全局/词条 case_sensitive 配置影响，大小写由正则本身控制。
+            compiled = self.plugin._get_compiled_regex(f"{self.data_key}:search", keyword, 0)
+            if compiled is None:
                 return False
+            return compiled.search(text) is not None
         else:
+            case_sensitive = keyword_cfg.get("case_sensitive", self.plugin.config.get("case_sensitive", False))
             if not case_sensitive:
                 text = text.lower()
                 keyword = keyword.lower()
@@ -50,7 +64,11 @@ class AutoDetectModule:
                 
                 # 检查是否完全匹配且非正则
                 is_regex = cfg.get("regex", False)
-                is_exact_match = msg == cfg["keyword"]
+                case_sensitive = cfg.get("case_sensitive", self.plugin.config.get("case_sensitive", False))
+                if case_sensitive:
+                    is_exact_match = msg == cfg["keyword"]
+                else:
+                    is_exact_match = msg.lower() == cfg["keyword"].lower()
                 
                 # 冷却时间检查
                 skip_cooldown = ignore_cooldown_on_exact_match and is_exact_match and not is_regex
@@ -115,7 +133,12 @@ class AutoDetectModule:
         # 尝试作为检测词匹配
         indices = []
         for i, cfg in enumerate(data):
-            if cfg['keyword'] == param:
+            if self._keyword_equals(
+                cfg["keyword"],
+                param,
+                cfg.get("regex", False),
+                cfg.get("case_sensitive", self.plugin.config.get("case_sensitive", False)),
+            ):
                 indices.append(i)
         
         return indices
@@ -146,7 +169,9 @@ class AutoDetectModule:
 
     async def add_item(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
 
         full_text = event.message_str.strip()
@@ -196,7 +221,19 @@ class AutoDetectModule:
             yield event.plain_result("回复内容不能为空。")
             return
 
-        keyword_cfg = next((item for item in self.plugin.data[self.data_key] if item["keyword"] == keyword), None)
+        keyword_cfg = next(
+            (
+                item
+                for item in self.plugin.data[self.data_key]
+                if self._keyword_equals(
+                    item["keyword"],
+                    keyword,
+                    item.get("regex", False),
+                    item.get("case_sensitive", self.plugin.config.get("case_sensitive", False)),
+                )
+            ),
+            None,
+        )
         
         current_group_id = event.get_group_id()
         is_group = event.get_platform_name() != "private"
@@ -231,14 +268,16 @@ class AutoDetectModule:
             }
             self.plugin.data[self.data_key].append(keyword_cfg)
 
-        self.plugin._save_data()
+        await self.plugin._save_data_async()
         logger.info(f"添加检测词: {keyword} (操作者: {event.get_sender_id()})")
         
         yield event.plain_result(f"成功操作检测词: {keyword}\n{status_msg}")
 
     async def edit_item(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
             
         msg_parts = event.message_str.strip().split()
@@ -280,7 +319,7 @@ class AutoDetectModule:
             old_keyword = self.plugin.data[self.data_key][idx]["keyword"]
             self.plugin.data[self.data_key][idx]["keyword"] = new_keyword
             self.plugin.data[self.data_key][idx]["regex"] = is_regex
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"编辑检测词: {old_keyword} -> {new_keyword} (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"已更新检测词 '{old_keyword}' 为: {new_keyword}")
         else:
@@ -288,7 +327,9 @@ class AutoDetectModule:
 
     async def del_items(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
             
         parts = event.message_str.strip().split(None, 1)
@@ -310,7 +351,7 @@ class AutoDetectModule:
                 cfg = self.plugin.data[self.data_key].pop(idx)
                 deleted_keywords.append(cfg['keyword'])
             
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"删除检测词: {', '.join(deleted_keywords)} (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"检测词 '{', '.join(deleted_keywords)}' 已删除。")
         except Exception as e:
@@ -319,7 +360,9 @@ class AutoDetectModule:
 
     async def toggle_groups(self, event: AstrMessageEvent, enable: bool):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
             
         parts = event.message_str.strip().split()
@@ -416,11 +459,34 @@ class AutoDetectModule:
                     groups_str = ", ".join(args)
                     cfg["enabled"] = True
 
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"修改检测词群聊限制: {cfg['keyword']} -> {cmd_name} {groups_str} (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"检测词 '{cfg['keyword']}' {cmd_name} 群聊: {groups_str}")
 
     async def list_items(self, event):
+        if not self.plugin._is_admin(event):
+            allow_group_users = self.plugin.config.get("allow_group_member_list_detects", False)
+            group_id = event.get_group_id()
+            if not allow_group_users or not group_id:
+                denied = self._permission_denied_result(event)
+                if denied:
+                    yield denied
+                return
+
+            enabled_keywords = [
+                cfg.get("keyword", "")
+                for cfg in self.plugin.data[self.data_key]
+                if cfg.get("keyword") and self._is_enabled_in_group(cfg, group_id)
+            ]
+            res = f"当前群聊({group_id})启用的检测词:\n"
+            if not enabled_keywords:
+                res += "无"
+            else:
+                for i, keyword in enumerate(enabled_keywords, 1):
+                    res += f"{i}. {keyword}\n"
+            yield event.plain_result(res.strip())
+            return
+
         res = "检测词列表:\n"
         if not self.plugin.data[self.data_key]:
             res += "无\n"
@@ -454,6 +520,12 @@ class AutoDetectModule:
         yield event.plain_result(res.strip())
 
     async def view_item(self, event: AstrMessageEvent):
+        if not self.plugin._is_admin(event):
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
+            return
+
         parts = event.message_str.strip().split()
         if len(parts) < 2:
             yield event.plain_result("用法: /查看检测词 <序号或检测词内容>")
@@ -502,7 +574,7 @@ class AutoDetectModule:
                     continue
 
                 intro += "回复详情：\n\u200b" 
-                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False)
+                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False, render_template=False)
                 if res_obj and res_obj.chain:
                     res_obj.chain.insert(0, Plain(intro))
                     yield res_obj
@@ -536,6 +608,12 @@ class AutoDetectModule:
                 yield event.plain_result(res.strip())
 
     async def view_reply(self, event: AstrMessageEvent):
+        if not self.plugin._is_admin(event):
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
+            return
+
         parts = event.message_str.strip().split()
         if len(parts) < 2:
             yield event.plain_result("用法: /查看检测词回复 <检测词序号/内容> [回复序号]")
@@ -575,7 +653,7 @@ class AutoDetectModule:
                     yield event.plain_result(intro)
                     return
 
-                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False)
+                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False, render_template=False)
                 if res_obj and res_obj.chain:
                     res_obj.chain.insert(0, Plain(intro))
                     yield res_obj
@@ -589,7 +667,9 @@ class AutoDetectModule:
 
     async def add_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
 
         full_text = event.message_str.strip()
@@ -618,13 +698,15 @@ class AutoDetectModule:
 
         processed_entry = await self.plugin._process_entry_images(entry)
         cfg["entries"].append(processed_entry)
-        self.plugin._save_data()
+        await self.plugin._save_data_async()
         
         yield event.plain_result(f"已为检测词 '{cfg['keyword']}' 添加新回复（当前共有 {len(cfg['entries'])} 个回复）。")
 
     async def edit_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
 
         # 格式: /编辑检测词回复 [检测词ID/内容] [回复序号] [新内容]
@@ -703,7 +785,7 @@ class AutoDetectModule:
             processed_entry = await self.plugin._process_entry_images(entry)
             cfg["entries"][reply_idx] = processed_entry
             
-            self.plugin._save_data()
+            await self.plugin._save_data_async()
             logger.info(f"编辑检测词回复: {cfg['keyword']} (序号 {reply_idx+1}) (操作者: {event.get_sender_id()})")
             yield event.plain_result(f"已更新检测词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复。")
 
@@ -713,7 +795,9 @@ class AutoDetectModule:
 
     async def delete_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
-            yield event.plain_result("权限不足。")
+            denied = self._permission_denied_result(event)
+            if denied:
+                yield denied
             return
             
         parts = event.message_str.strip().split()
@@ -749,7 +833,7 @@ class AutoDetectModule:
                 keyword_cfg["entries"].pop(reply_idx)
                 keyword = keyword_cfg["keyword"]
                 
-                self.plugin._save_data()
+                await self.plugin._save_data_async()
                 logger.info(f"删除检测词回复: {keyword} 序号 {idx+1}, 回复序号 {reply_idx+1} (操作者: {event.get_sender_id()})")
                 yield event.plain_result(f"已删除检测词 '{keyword}' 的第 {reply_idx+1} 个回复。")
             else:
