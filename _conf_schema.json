@@ -32,6 +32,12 @@
         "hint": "回复时是否引用触发回复的消息。",
         "default": false
     },
+    "qq_forward_all_replies": {
+        "description": "合并转发全部回复",
+        "type": "bool",
+        "hint": "开启后，在 QQ 群聊命中同一个关键词或检测词且该词条下有多条回复时，会以合并转发形式发送全部回复；关闭时保持随机发送单条回复。",
+        "default": false
+    },
     "recall_delay": {
         "description": "撤回延迟（秒）",
         "type": "string",
@@ -41,7 +47,7 @@
     "case_sensitive": {
         "description": "是否大小写敏感",
         "type": "bool",
-        "hint": "针对非正则的关键词/检测词匹配（含按内容查找）是否区分大小写。",
+        "hint": "针对非正则的关键词/检测词匹配是否区分大小写。",
         "default": false
     },
     "cooldown": {

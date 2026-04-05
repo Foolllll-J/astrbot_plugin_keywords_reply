@@ -10,8 +10,8 @@ from urllib.parse import unquote, urlparse
 import aiohttp
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageEventResult
-from astrbot.api.message_components import At, Face, Image, Plain, Record, Reply, Video
+from astrbot.api.event import AstrMessageEvent, MessageEventResult, MessageChain
+from astrbot.api.message_components import At, Face, Image, Node, Nodes, Plain, Record, Reply, Video
 
 
 class PluginUtils:
@@ -20,6 +20,7 @@ class PluginUtils:
         self._mention_pattern = re.compile(
             r"\[@\s*(\d+)\]",
         )
+        self._forward_bot_info = {}
 
     def normalize_data(self, data: dict) -> dict:
         if not isinstance(data, dict):
@@ -160,6 +161,92 @@ class PluginUtils:
         if hasattr(platform_inst, "client") and hasattr(platform_inst.client, "api"):
             return platform_inst.client.api
         return None
+
+    def is_qq_platform_event(self, event: AstrMessageEvent) -> bool:
+        platform_id = event.get_platform_id()
+        adapter_name = self.get_platform_adapter_name(platform_id).lower()
+        platform_name = str(event.get_platform_name() or "").lower()
+        candidates = {adapter_name, platform_name, str(platform_id or "").lower()}
+        return any(name in {"aiocqhttp", "onebot", "napcat"} for name in candidates if name)
+
+    def should_use_forwarded_replies(self, event: AstrMessageEvent, entries: list[dict]) -> bool:
+        if not self.plugin.config.get("qq_forward_all_replies", False):
+            return False
+        if len(entries or []) <= 1:
+            return False
+        if not event.get_group_id():
+            return False
+        return self.is_qq_platform_event(event)
+
+    def _get_platform_instances(self) -> list:
+        pm = getattr(self.plugin.context, "platform_manager", None)
+        if not pm:
+            return []
+        if hasattr(pm, "platform_insts"):
+            return list(getattr(pm, "platform_insts") or [])
+        if hasattr(pm, "get_insts"):
+            try:
+                return list(pm.get_insts() or [])
+            except Exception:
+                return []
+        return []
+
+    async def get_forward_bot_identity(self, event: AstrMessageEvent) -> tuple[int, str]:
+        platform_id = event.get_platform_id()
+        cache_key = str(platform_id or "")
+        cached = self._forward_bot_info.get(cache_key)
+        if cached:
+            return cached
+
+        bot = getattr(event, "bot", None)
+        if bot is None:
+            platform_inst = self.plugin.context.get_platform_inst(platform_id) if platform_id else None
+            if platform_inst is not None:
+                if hasattr(platform_inst, "get_client"):
+                    try:
+                        bot = platform_inst.get_client()
+                    except Exception:
+                        bot = None
+                if bot is None and hasattr(platform_inst, "bot"):
+                    bot = platform_inst.bot
+
+        if bot is None:
+            for platform_inst in self._get_platform_instances():
+                try:
+                    meta = platform_inst.meta() if hasattr(platform_inst, "meta") else None
+                    meta_id = str(getattr(meta, "id", "") or "")
+                    meta_name = str(getattr(meta, "name", "") or "").lower()
+                    if platform_id and meta_id != str(platform_id):
+                        continue
+                    if platform_id or any(token in meta_name for token in ("qq", "onebot", "aiocqhttp", "napcat")):
+                        if hasattr(platform_inst, "get_client"):
+                            bot = platform_inst.get_client()
+                        elif hasattr(platform_inst, "bot"):
+                            bot = platform_inst.bot
+                        if bot is not None:
+                            break
+                except Exception:
+                    continue
+
+        self_id = 0
+        node_name = "AstrBot"
+        if bot is not None and hasattr(bot, "get_login_info"):
+            try:
+                info = await bot.get_login_info()
+                self_id = int(info.get("user_id") or 0)
+                node_name = str(info.get("nickname") or info.get("user_name") or node_name)
+            except Exception as exc:
+                logger.debug(f"获取 QQ 合并转发 bot 信息失败: {exc}")
+
+        if self_id <= 0:
+            try:
+                self_id = int(event.get_self_id() or 0)
+            except Exception:
+                self_id = 0
+
+        identity = (self_id, node_name)
+        self._forward_bot_info[cache_key] = identity
+        return identity
 
     def extract_reply_message_id(self, event: AstrMessageEvent) -> str | None:
         try:
@@ -877,6 +964,66 @@ class PluginUtils:
 
         for chunk in chunks:
             await event.send(MessageEventResult(chain=chunk))
+
+    async def send_entries_forward_reply(self, event: AstrMessageEvent, entries: list[dict], delay: int = 0):
+        if not entries:
+            return False
+
+        self_id, node_name = await self.get_forward_bot_identity(event)
+        nodes = []
+        for entry in entries:
+            chunks = self.build_entry_message_chunks(
+                event,
+                entry,
+                use_quote=False,
+                render_template=True,
+            )
+            for chunk in chunks:
+                if chunk:
+                    nodes.append(Node(uin=self_id, name=node_name, content=chunk))
+
+        if not nodes:
+            return False
+
+        try:
+            group_id = event.get_group_id()
+            if not group_id:
+                return False
+
+            bot = getattr(event, "bot", None)
+            if bot is None:
+                platform_inst = self.plugin.context.get_platform_inst(event.get_platform_id())
+                if platform_inst is not None:
+                    if hasattr(platform_inst, "get_client"):
+                        try:
+                            bot = platform_inst.get_client()
+                        except Exception:
+                            bot = None
+                    if bot is None and hasattr(platform_inst, "bot"):
+                        bot = platform_inst.bot
+
+            if bot is None or not hasattr(bot, "call_action"):
+                return False
+
+            payload = await Nodes(nodes).to_dict()
+            ret = await bot.call_action(
+                "send_group_forward_msg",
+                group_id=int(group_id),
+                messages=payload.get("messages", []),
+            )
+
+            message_id = 0
+            if isinstance(ret, dict):
+                message_id = int(ret.get("message_id") or 0)
+
+            if delay > 0 and message_id > 0:
+                actual_delay = min(delay, 115) if delay >= 120 else delay
+                await asyncio.sleep(actual_delay)
+                await bot.call_action("delete_msg", message_id=message_id)
+            return True
+        except Exception as exc:
+            logger.error(f"发送 QQ 合并转发回复失败: {exc}", exc_info=True)
+            return False
 
     def is_safe_regex(self, pattern: str) -> bool:
         dangerous_patterns = [

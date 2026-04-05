@@ -99,6 +99,9 @@ class AutoDetectModule:
                 if cooldown > 0 and not skip_cooldown:
                     self._last_triggered[session_id] = now
                 
+                if self.plugin.utils.should_use_forwarded_replies(event, cfg["entries"]):
+                    return list(cfg["entries"])
+
                 entry = random.choice(cfg["entries"])
                 return entry
         return None

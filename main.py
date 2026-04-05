@@ -266,12 +266,22 @@ class KeywordsReplyPlugin(Star):
 
         entry = await self.cmd_module.handle_message(event)
         if entry:
-            await self.utils.send_entry_reply(event, entry, kw_delay, use_quote=True)
+            if isinstance(entry, list):
+                sent = await self.utils.send_entries_forward_reply(event, entry, kw_delay)
+                if not sent:
+                    await self.utils.send_entry_reply(event, entry[0], kw_delay, use_quote=True)
+            else:
+                await self.utils.send_entry_reply(event, entry, kw_delay, use_quote=True)
             event.stop_event()
             return
 
         entry = await self.detect_module.handle_message(event)
         if entry:
-            await self.utils.send_entry_reply(event, entry, dt_delay, use_quote=True)
+            if isinstance(entry, list):
+                sent = await self.utils.send_entries_forward_reply(event, entry, dt_delay)
+                if not sent:
+                    await self.utils.send_entry_reply(event, entry[0], dt_delay, use_quote=True)
+            else:
+                await self.utils.send_entry_reply(event, entry, dt_delay, use_quote=True)
             event.stop_event()
             return

@@ -112,6 +112,7 @@
 | **`allow_group_member_list_keywords`** | `bool` | `false` | 是否允许普通群成员使用“查看关键词列表”（仅显示当前群已启用的关键词名）。 |
 | **`allow_group_member_list_detects`** | `bool` | `false` | 是否允许普通群成员使用“查看检测词列表”（仅显示当前群已启用的检测词名）。 |
 | **`quote_reply`**    | `bool`      | `false` | 回复时是否引用触发回复的消息。                                        |
+| **`qq_forward_all_replies`** | `bool` | `false` | 是否在 QQ 群聊中将同一关键词/检测词下的全部回复以合并转发形式发送；关闭时保持随机发送单条回复。|
 | **`recall_delay`**   | `str`       | `"0 0"` | 自动撤回延迟（秒）。格式：`"关键词延迟 检测词延迟"`。0 表示不撤回。 |
 | **`case_sensitive`** | `bool`      | `false` | 非正则关键词/检测词匹配时是否区分大小写（含按内容查找、触发匹配）。   |
 | **`cooldown`**       | `int`       | `0`     | 检测词触发冷却时间（秒），0 表示不冷却。                              |
