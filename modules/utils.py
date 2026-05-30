@@ -12,6 +12,7 @@ import aiohttp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, MessageChain
 from astrbot.api.message_components import At, Face, Image, Node, Nodes, Plain, Record, Reply, Video
+from ..webui.payloads import get_effective_bool
 
 
 class PluginUtils:
@@ -21,6 +22,29 @@ class PluginUtils:
             r"\[@\s*(\d+)\]",
         )
         self._forward_bot_info = {}
+
+    def build_empty_entry(self) -> dict:
+        return {
+            "text": "",
+            "images": [],
+            "records": [],
+            "videos": [],
+            "ats": [],
+            "faces": [],
+            "forwards": [],
+        }
+
+    def entry_has_payload(self, entry: dict | None) -> bool:
+        entry = entry or {}
+        return bool(
+            (entry.get("text") or "").strip()
+            or entry.get("images")
+            or entry.get("records")
+            or entry.get("videos")
+            or entry.get("ats")
+            or entry.get("faces")
+            or entry.get("forwards")
+        )
 
     def normalize_data(self, data: dict) -> dict:
         if not isinstance(data, dict):
@@ -36,6 +60,7 @@ class PluginUtils:
                     entry.setdefault("videos", [])
                     entry.setdefault("ats", [])
                     entry.setdefault("faces", [])
+                    entry.setdefault("forwards", [])
         return data
 
     def load_data(self):
@@ -169,12 +194,24 @@ class PluginUtils:
         candidates = {adapter_name, platform_name, str(platform_id or "").lower()}
         return any(name in {"aiocqhttp", "onebot", "napcat"} for name in candidates if name)
 
-    def should_use_forwarded_replies(self, event: AstrMessageEvent, entries: list[dict]) -> bool:
-        if not self.plugin.config.get("qq_forward_all_replies", False):
+    def should_use_forwarded_replies(
+        self,
+        event: AstrMessageEvent,
+        entries: list[dict],
+        rule_cfg: dict | None = None,
+    ) -> bool:
+        if not get_effective_bool(
+            self.plugin,
+            rule_cfg,
+            "qq_forward_all_replies_override",
+            "qq_forward_all_replies",
+        ):
             return False
         if len(entries or []) <= 1:
             return False
         if not event.get_group_id():
+            return False
+        if any(entry.get("forwards") for entry in entries or []):
             return False
         return self.is_qq_platform_event(event)
 
@@ -509,14 +546,7 @@ class PluginUtils:
         return entry
 
     async def build_entry_from_onebot_segments(self, segments: list[dict]) -> dict:
-        entry = {
-            "text": "",
-            "images": [],
-            "records": [],
-            "videos": [],
-            "ats": [],
-            "faces": [],
-        }
+        entry = self.build_empty_entry()
 
         text_parts = []
         for seg in segments or []:
@@ -558,12 +588,21 @@ class PluginUtils:
                 resolved_url = url or (source if source.startswith(("http://", "https://")) else None)
                 resolved_path = None if resolved_url else (source or None)
                 entry["videos"].append({"file": source or None, "url": resolved_url, "path": resolved_path})
+            elif seg_type == "forward":
+                forward_id = str(
+                    data.get("id", "")
+                    or data.get("message_id", "")
+                    or data.get("res_id", "")
+                    or ""
+                ).strip()
+                if forward_id:
+                    entry["forwards"].append({"id": forward_id})
 
         entry["text"] = "".join(text_parts).strip()
         return entry
 
     async def fetch_reply_entry(self, event: AstrMessageEvent) -> dict:
-        empty_entry = {"text": "", "images": [], "records": [], "videos": [], "ats": [], "faces": []}
+        empty_entry = self.build_empty_entry()
 
         platform_id = event.get_platform_id()
         if self.get_platform_adapter_name(platform_id) != "aiocqhttp":
@@ -587,7 +626,81 @@ class PluginUtils:
         if not isinstance(message_segments, list):
             return empty_entry
 
-        return await self.build_entry_from_onebot_segments(message_segments)
+        entry = await self.build_entry_from_onebot_segments(message_segments)
+        if entry.get("forwards"):
+            relayed_forward = await self._relay_forward_reply_to_self(
+                event, int(reply_message_id)
+            )
+            if relayed_forward:
+                entry["forwards"] = [relayed_forward]
+            else:
+                entry["forwards"] = []
+        return entry
+
+    async def _relay_forward_reply_to_self(
+        self, event: AstrMessageEvent, source_message_id: int
+    ) -> dict | None:
+        if not source_message_id:
+            return None
+
+        bot = getattr(event, "bot", None)
+        platform_id = event.get_platform_id()
+        if bot is None and platform_id:
+            platform_inst = self.plugin.context.get_platform_inst(platform_id)
+            if platform_inst is not None:
+                if hasattr(platform_inst, "get_client"):
+                    try:
+                        bot = platform_inst.get_client()
+                    except Exception:
+                        bot = None
+                if bot is None and hasattr(platform_inst, "bot"):
+                    bot = platform_inst.bot
+
+        api = getattr(bot, "api", None)
+        if api is None:
+            return None
+
+        try:
+            login_info = await api.call_action("get_login_info")
+            self_id = int(login_info.get("user_id") or 0)
+            if self_id <= 0:
+                return None
+
+            ret = await api.call_action(
+                "forward_friend_single_msg",
+                user_id=self_id,
+                message_id=source_message_id,
+            )
+
+            relay_msg_id = ""
+            if isinstance(ret, dict):
+                relay_msg_id = str(
+                    ret.get("message_id", "")
+                    or ret.get("data", {}).get("message_id", "")
+                    or ""
+                ).strip()
+            if relay_msg_id:
+                return {"id": relay_msg_id}
+
+            await asyncio.sleep(1)
+            history_result = await api.call_action(
+                "get_friend_msg_history",
+                user_id=self_id,
+                count=10,
+            )
+            messages = []
+            if isinstance(history_result, dict):
+                messages = history_result.get("messages", []) or history_result.get(
+                    "data", {}
+                ).get("messages", [])
+
+            for msg in reversed(messages):
+                relay_msg_id = str(msg.get("message_id", "") or "").strip()
+                if relay_msg_id:
+                    return {"id": relay_msg_id}
+        except Exception as exc:
+            logger.warning(f"转存引用的合并转发消息失败: {exc}")
+        return None
 
     def merge_entries(self, primary: dict, secondary: dict) -> dict:
         primary = primary or {}
@@ -608,6 +721,7 @@ class PluginUtils:
             "videos": list(primary.get("videos", [])) + list(secondary.get("videos", [])),
             "ats": list(primary.get("ats", [])) + list(secondary.get("ats", [])),
             "faces": list(primary.get("faces", [])) + list(secondary.get("faces", [])),
+            "forwards": list(primary.get("forwards", [])) + list(secondary.get("forwards", [])),
         }
 
     def summarize_entry_for_list(self, entry: dict, max_text: int = 30) -> str:
@@ -622,6 +736,8 @@ class PluginUtils:
             placeholders.append("[语音]")
         if entry.get("videos"):
             placeholders.append("[视频]")
+        if entry.get("forwards"):
+            placeholders.append("[聊天记录]")
         if not summary:
             return "".join(placeholders)
         return f"{summary}{''.join(placeholders)}"
@@ -636,6 +752,8 @@ class PluginUtils:
             lines.append("[语音]")
         if entry.get("videos"):
             lines.append("[视频]")
+        if entry.get("forwards"):
+            lines.append("[聊天记录]")
         return "\n".join(lines).strip()
 
     def get_reply_result(
@@ -644,11 +762,19 @@ class PluginUtils:
         entry: dict,
         use_quote: bool = False,
         render_template: bool = True,
+        rule_cfg: dict | None = None,
     ):
         try:
             chain = []
 
-            if use_quote and self.plugin.config.get("quote_reply", False) and event.message_obj and event.message_obj.message_id:
+            if (
+                use_quote
+                and get_effective_bool(
+                    self.plugin, rule_cfg, "quote_reply_override", "quote_reply"
+                )
+                and event.message_obj
+                and event.message_obj.message_id
+            ):
                 chain.append(Reply(id=event.message_obj.message_id))
 
             if entry.get("text"):
@@ -693,12 +819,20 @@ class PluginUtils:
         entry: dict,
         use_quote: bool = False,
         render_template: bool = True,
+        rule_cfg: dict | None = None,
     ):
         chunks = []
         first_chunk = []
         quote_component = None
 
-        if use_quote and self.plugin.config.get("quote_reply", False) and event.message_obj and event.message_obj.message_id:
+        if (
+            use_quote
+            and get_effective_bool(
+                self.plugin, rule_cfg, "quote_reply_override", "quote_reply"
+            )
+            and event.message_obj
+            and event.message_obj.message_id
+        ):
             quote_component = Reply(id=event.message_obj.message_id)
 
         if entry.get("text"):
@@ -745,6 +879,49 @@ class PluginUtils:
                     chunks.append([Video.fromFileSystem(full_path)])
 
         return chunks
+
+    async def _send_forward_reply(
+        self,
+        event: AstrMessageEvent,
+        forward: dict,
+        delay: int = 0,
+    ) -> bool:
+        forward_id = str(forward.get("id", "") or "").strip()
+        group_id = event.get_group_id()
+        if not forward_id or not group_id:
+            return False
+
+        bot = getattr(event, "bot", None)
+        if bot is None:
+            platform_inst = self.plugin.context.get_platform_inst(event.get_platform_id())
+            if platform_inst is not None:
+                if hasattr(platform_inst, "get_client"):
+                    try:
+                        bot = platform_inst.get_client()
+                    except Exception:
+                        bot = None
+                if bot is None and hasattr(platform_inst, "bot"):
+                    bot = platform_inst.bot
+
+        api = getattr(bot, "api", None)
+        if api is None:
+            return False
+
+        try:
+            ret = await api.call_action(
+                "forward_group_single_msg",
+                group_id=int(group_id),
+                message_id=int(forward_id),
+            )
+            message_id = int(ret.get("message_id") or 0) if isinstance(ret, dict) else 0
+            if delay > 0 and message_id > 0:
+                actual_delay = min(delay, 115) if delay >= 120 else delay
+                await asyncio.sleep(actual_delay)
+                await api.call_action("delete_msg", message_id=message_id)
+            return True
+        except Exception as exc:
+            logger.error(f"发送聊天记录回复失败: {exc}", exc_info=True)
+            return False
 
     def _component_file_to_onebot_file(self, file_value: str) -> str:
         if not file_value:
@@ -904,9 +1081,17 @@ class PluginUtils:
         entry: dict,
         delay: int = 0,
         use_quote: bool = True,
+        rule_cfg: dict | None = None,
     ):
-        chunks = self.build_entry_message_chunks(event, entry, use_quote=use_quote, render_template=True)
-        if not chunks:
+        chunks = self.build_entry_message_chunks(
+            event,
+            entry,
+            use_quote=use_quote,
+            render_template=True,
+            rule_cfg=rule_cfg,
+        )
+        forwards = list(entry.get("forwards", []))
+        if not chunks and not forwards:
             return
 
         if delay > 0 and event.get_platform_name() == "aiocqhttp":
@@ -949,6 +1134,14 @@ class PluginUtils:
                     if message_id:
                         message_ids.append(message_id)
 
+                for forward in forwards:
+                    forward_message_id = await self._send_forward_reply(
+                        event, forward, delay=0
+                    )
+                    sent_any = bool(forward_message_id) or sent_any
+                    if forward_message_id > 0:
+                        message_ids.append(forward_message_id)
+
                 if message_ids:
                     try:
                         await asyncio.sleep(delay)
@@ -964,8 +1157,16 @@ class PluginUtils:
 
         for chunk in chunks:
             await event.send(MessageEventResult(chain=chunk))
+        for forward in forwards:
+            await self._send_forward_reply(event, forward, delay=delay)
 
-    async def send_entries_forward_reply(self, event: AstrMessageEvent, entries: list[dict], delay: int = 0):
+    async def send_entries_forward_reply(
+        self,
+        event: AstrMessageEvent,
+        entries: list[dict],
+        delay: int = 0,
+        rule_cfg: dict | None = None,
+    ):
         if not entries:
             return False
 
@@ -977,6 +1178,7 @@ class PluginUtils:
                 entry,
                 use_quote=False,
                 render_template=True,
+                rule_cfg=rule_cfg,
             )
             for chunk in chunks:
                 if chunk:

@@ -7,6 +7,8 @@ import asyncio
 from .modules.command_triggered import CommandTriggeredModule
 from .modules.auto_detect import AutoDetectModule
 from .modules.utils import PluginUtils
+from .webui.api import KeywordsReplyWebUIApi
+from .webui.payloads import get_effective_recall_delay
 
 class KeywordsReplyPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -29,10 +31,12 @@ class KeywordsReplyPlugin(Star):
         self.data_version = 1
         self.cmd_module = CommandTriggeredModule(self)
         self.detect_module = AutoDetectModule(self)
+        self.webui_api = KeywordsReplyWebUIApi(self)
+        self.webui_api.register()
         
     @filter.command("添加关键词")
     async def add_keyword_cmd(self, event: AstrMessageEvent):
-        """添加新关键词和回复。用法: /添加关键词 <关键词> <回复内容(支持图片)>"""
+        """添加新关键词和回复。用法: /添加关键词 <关键词> <回复内容>"""
         try:
             async for res in self.cmd_module.add_item(event):
                 yield res
@@ -264,23 +268,59 @@ class KeywordsReplyPlugin(Star):
         kw_delay = int(recall_delay[0]) if len(recall_delay) > 0 else 0
         dt_delay = int(recall_delay[1]) if len(recall_delay) > 1 else 0
 
-        entry = await self.cmd_module.handle_message(event)
-        if entry:
+        command_match = await self.cmd_module.handle_message(event)
+        if command_match:
+            entry = command_match["payload"]
+            kw_delay = get_effective_recall_delay(
+                self, command_match["rule"], "command_triggered"
+            )
             if isinstance(entry, list):
-                sent = await self.utils.send_entries_forward_reply(event, entry, kw_delay)
+                sent = await self.utils.send_entries_forward_reply(
+                    event, entry, kw_delay, rule_cfg=command_match["rule"]
+                )
                 if not sent:
-                    await self.utils.send_entry_reply(event, entry[0], kw_delay, use_quote=True)
+                    await self.utils.send_entry_reply(
+                        event,
+                        entry[0],
+                        kw_delay,
+                        use_quote=True,
+                        rule_cfg=command_match["rule"],
+                    )
             else:
-                await self.utils.send_entry_reply(event, entry, kw_delay, use_quote=True)
+                await self.utils.send_entry_reply(
+                    event,
+                    entry,
+                    kw_delay,
+                    use_quote=True,
+                    rule_cfg=command_match["rule"],
+                )
             event.stop_event()
             return
 
-        entry = await self.detect_module.handle_message(event)
-        if entry:
+        detect_match = await self.detect_module.handle_message(event)
+        if detect_match:
+            entry = detect_match["payload"]
+            dt_delay = get_effective_recall_delay(
+                self, detect_match["rule"], "auto_detect"
+            )
             if isinstance(entry, list):
-                sent = await self.utils.send_entries_forward_reply(event, entry, dt_delay)
+                sent = await self.utils.send_entries_forward_reply(
+                    event, entry, dt_delay, rule_cfg=detect_match["rule"]
+                )
                 if not sent:
-                    await self.utils.send_entry_reply(event, entry[0], dt_delay, use_quote=True)
+                    await self.utils.send_entry_reply(
+                        event,
+                        entry[0],
+                        dt_delay,
+                        use_quote=True,
+                        rule_cfg=detect_match["rule"],
+                    )
             else:
-                await self.utils.send_entry_reply(event, entry, dt_delay, use_quote=True)
+                await self.utils.send_entry_reply(
+                    event,
+                    entry,
+                    dt_delay,
+                    use_quote=True,
+                    rule_cfg=detect_match["rule"],
+                )
             return

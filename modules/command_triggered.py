@@ -3,6 +3,7 @@ import random
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain
+from ..webui.payloads import get_effective_bool
 
 class CommandTriggeredModule:
     def __init__(self, plugin):
@@ -27,7 +28,9 @@ class CommandTriggeredModule:
 
     def _keyword_equals(self, left: str, right: str, is_regex: bool = False) -> bool:
         """关键词内容比较：仅对非正则关键词应用 case_sensitive 配置。"""
-        if is_regex or self.plugin.config.get("case_sensitive", False):
+        if is_regex or get_effective_bool(
+            self.plugin, None, "case_sensitive_override", "case_sensitive"
+        ):
             return left == right
         return left.lower() == right.lower()
 
@@ -62,7 +65,9 @@ class CommandTriggeredModule:
                 return False
             return compiled.fullmatch(text) is not None
         else:
-            case_sensitive = self.plugin.config.get("case_sensitive", False)
+            case_sensitive = get_effective_bool(
+                self.plugin, keyword_cfg, "case_sensitive_override", "case_sensitive"
+            )
             if not case_sensitive:
                 text = text.lower()
                 keyword = keyword.lower()
@@ -70,6 +75,9 @@ class CommandTriggeredModule:
 
     async def handle_message(self, event: AstrMessageEvent):
         if not event.is_at_or_wake_command:
+            return None
+
+        if not event.get_group_id():
             return None
             
         msg_str = event.message_str.strip()
@@ -80,12 +88,9 @@ class CommandTriggeredModule:
         group_id = event.get_group_id()
 
         self._ensure_match_index()
-        case_sensitive = self.plugin.config.get("case_sensitive", False)
         candidate_indices = []
-        if case_sensitive:
-            candidate_indices.extend(self._exact_index_cs.get(potential_cmd, []))
-        else:
-            candidate_indices.extend(self._exact_index_ci.get(potential_cmd.lower(), []))
+        candidate_indices.extend(self._exact_index_cs.get(potential_cmd, []))
+        candidate_indices.extend(self._exact_index_ci.get(potential_cmd.lower(), []))
         candidate_indices.extend(self._regex_indices)
 
         checked = set()
@@ -115,10 +120,12 @@ class CommandTriggeredModule:
             logger.info(f"关键词触发: {potential_cmd} (来自: {event.get_sender_id()})")
             if not cfg["entries"]:
                 return None
-            if self.plugin.utils.should_use_forwarded_replies(event, cfg["entries"]):
-                return list(cfg["entries"])
+            if self.plugin.utils.should_use_forwarded_replies(
+                event, cfg["entries"], rule_cfg=cfg
+            ):
+                return {"payload": list(cfg["entries"]), "rule": cfg}
             entry = random.choice(cfg["entries"])
-            return entry
+            return {"payload": entry, "rule": cfg}
         return None
 
     def _find_indices(self, param: str) -> list[int]:
@@ -225,8 +232,7 @@ class CommandTriggeredModule:
         entry, has_media = self.plugin.utils.parse_message_to_entry(reply_components)
         reply_entry = await self.plugin.utils.fetch_reply_entry(event)
         entry = self.plugin.utils.merge_entries(entry, reply_entry)
-        merged_has_media = any((entry.get("images"), entry.get("records"), entry.get("videos"), entry.get("ats"), entry.get("faces")))
-        if not entry.get("text") and not merged_has_media:
+        if not self.plugin.utils.entry_has_payload(entry):
             yield event.plain_result("回复内容不能为空。")
             return
 
@@ -658,8 +664,7 @@ class CommandTriggeredModule:
         entry, has_media = self.plugin.utils.parse_message_to_entry(reply_components)
         reply_entry = await self.plugin.utils.fetch_reply_entry(event)
         entry = self.plugin.utils.merge_entries(entry, reply_entry)
-        merged_has_media = any((entry.get("images"), entry.get("records"), entry.get("videos"), entry.get("ats"), entry.get("faces")))
-        if not entry.get("text") and not merged_has_media:
+        if not self.plugin.utils.entry_has_payload(entry):
             yield event.plain_result("回复内容不能为空。")
             return
 
@@ -753,8 +758,7 @@ class CommandTriggeredModule:
             entry, has_media = self.plugin.utils.parse_message_to_entry(processed_comps)
             reply_entry = await self.plugin.utils.fetch_reply_entry(event)
             entry = self.plugin.utils.merge_entries(entry, reply_entry)
-            merged_has_media = any((entry.get("images"), entry.get("records"), entry.get("videos"), entry.get("ats"), entry.get("faces")))
-            if not entry.get("text") and not merged_has_media:
+            if not self.plugin.utils.entry_has_payload(entry):
                  yield event.plain_result("回复内容不能为空。")
                  return
             

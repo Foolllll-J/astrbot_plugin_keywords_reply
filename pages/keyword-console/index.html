@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>关键词规则台</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div>
+            <div class="eyebrow">Think it, get it.</div>
+            <h1>Keyword Console</h1>
+          </div>
+          <button id="refreshBtn" class="icon-button" type="button" aria-label="刷新">刷新</button>
+        </div>
+
+        <div class="toolbar">
+          <div class="tab-row">
+            <button class="tab active" data-kind="command_triggered" type="button">关键词</button>
+            <button class="tab" data-kind="auto_detect" type="button">检测词</button>
+          </div>
+          <div class="toolbar-actions">
+            <input id="searchInput" class="text-input" type="search" placeholder="搜索规则" />
+            <button id="newRuleBtn" class="primary-button" type="button">新建规则</button>
+          </div>
+        </div>
+
+        <div id="listMeta" class="list-meta"></div>
+        <div id="ruleList" class="rule-list"></div>
+      </aside>
+
+      <main class="editor">
+        <div id="emptyState" class="empty-state">
+          <h2>选择或新建一条规则开始编辑</h2>
+        </div>
+
+        <div id="editor" class="editor-content hidden">
+          <div class="editor-header">
+            <div>
+              <div id="editorEyebrow" class="eyebrow">关键词</div>
+              <h2 id="editorTitle">未命名规则</h2>
+            </div>
+            <div class="header-actions">
+              <button id="saveBtn" class="primary-button" type="button">保存全部规则</button>
+              <button id="deleteRuleBtn" class="danger-button" type="button">删除当前规则</button>
+            </div>
+          </div>
+
+          <div id="statusBanner" class="status-banner hidden" role="status" aria-live="polite"></div>
+
+          <section class="panel">
+            <div class="panel-title">基础信息</div>
+            <div class="grid two">
+              <label class="field">
+                <span>规则文本</span>
+                <input id="keywordInput" class="text-input" type="text" />
+              </label>
+              <label class="field checkbox-field">
+                <input id="regexInput" type="checkbox" />
+                <span>使用正则匹配</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">生效范围</div>
+            <div class="grid two">
+              <label class="field">
+                <span>范围模式</span>
+                <select id="scopeModeInput" class="text-input">
+                  <option value="disabled">全局禁用</option>
+                  <option value="whitelist">白名单</option>
+                  <option value="blacklist">黑名单</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>群号列表</span>
+                <textarea
+                  id="groupsInput"
+                  class="text-area mono"
+                  rows="3"
+                  placeholder="支持换行、空格、逗号、分号、顿号分隔多个群号"
+                ></textarea>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">行为设置</div>
+            <div id="overrideGrid" class="grid two"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div class="panel-title">回复列表</div>
+              <button id="newEntryBtn" class="secondary-button" type="button">新增回复</button>
+            </div>
+            <div id="entryList" class="entry-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div class="panel-title">回复内容</div>
+              <div class="button-row">
+                <button class="chip-button" data-component="text" type="button">文本</button>
+                <button class="chip-button" data-component="at" type="button">@成员</button>
+                <button class="chip-button" data-component="atall" type="button">@全体</button>
+                <button class="chip-button upload-button" data-upload-type="image" type="button">图片</button>
+                <button class="chip-button upload-button" data-upload-type="record" type="button">语音</button>
+                <button class="chip-button upload-button" data-upload-type="video" type="button">视频</button>
+              </div>
+            </div>
+            <input id="hiddenUploadInput" type="file" class="hidden" />
+            <div id="componentList" class="stack-list"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

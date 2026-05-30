@@ -4,6 +4,7 @@ import random
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain
+from ..webui.payloads import get_effective_bool, get_effective_int
 
 class AutoDetectModule:
     def __init__(self, plugin):
@@ -40,7 +41,12 @@ class AutoDetectModule:
                 return False
             return compiled.search(text) is not None
         else:
-            case_sensitive = keyword_cfg.get("case_sensitive", self.plugin.config.get("case_sensitive", False))
+            case_sensitive = get_effective_bool(
+                self.plugin,
+                keyword_cfg,
+                "case_sensitive_override",
+                "case_sensitive",
+            )
             if not case_sensitive:
                 text = text.lower()
                 keyword = keyword.lower()
@@ -49,22 +55,33 @@ class AutoDetectModule:
     async def handle_message(self, event: AstrMessageEvent):
         if event.is_at_or_wake_command:
             return None
+
+        if not event.get_group_id():
+            return None
             
         msg = event.message_str.strip()
         session_id = event.get_group_id() or event.get_sender_id() # 优先使用群号，私聊则使用发送者 ID
         now = time.time()
         
-        cooldown = self.plugin.config.get("cooldown", 0)
-        ignore_cooldown_on_exact_match = self.plugin.config.get("ignore_cooldown_on_exact_match", False)
-        
         for i, cfg in enumerate(self.plugin.data[self.data_key]):
             if self._match_keyword(msg, cfg):
                 if not cfg.get("enabled", True):
                     continue
+                cooldown = get_effective_int(
+                    self.plugin, cfg, "cooldown_override", "cooldown"
+                )
+                ignore_cooldown_on_exact_match = get_effective_bool(
+                    self.plugin,
+                    cfg,
+                    "ignore_cooldown_on_exact_match_override",
+                    "ignore_cooldown_on_exact_match",
+                )
                 
                 # 检查是否完全匹配且非正则
                 is_regex = cfg.get("regex", False)
-                case_sensitive = cfg.get("case_sensitive", self.plugin.config.get("case_sensitive", False))
+                case_sensitive = get_effective_bool(
+                    self.plugin, cfg, "case_sensitive_override", "case_sensitive"
+                )
                 if case_sensitive:
                     is_exact_match = msg == cfg["keyword"]
                 else:
@@ -99,11 +116,13 @@ class AutoDetectModule:
                 if cooldown > 0 and not skip_cooldown:
                     self._last_triggered[session_id] = now
                 
-                if self.plugin.utils.should_use_forwarded_replies(event, cfg["entries"]):
-                    return list(cfg["entries"])
+                if self.plugin.utils.should_use_forwarded_replies(
+                    event, cfg["entries"], rule_cfg=cfg
+                ):
+                    return {"payload": list(cfg["entries"]), "rule": cfg}
 
                 entry = random.choice(cfg["entries"])
-                return entry
+                return {"payload": entry, "rule": cfg}
         return None
 
     def _find_indices(self, param: str) -> list[int]:
@@ -222,8 +241,7 @@ class AutoDetectModule:
         entry, has_media = self.plugin.utils.parse_message_to_entry(reply_components)
         reply_entry = await self.plugin.utils.fetch_reply_entry(event)
         entry = self.plugin.utils.merge_entries(entry, reply_entry)
-        merged_has_media = any((entry.get("images"), entry.get("records"), entry.get("videos"), entry.get("ats"), entry.get("faces")))
-        if not entry.get("text") and not merged_has_media:
+        if not self.plugin.utils.entry_has_payload(entry):
             yield event.plain_result("回复内容不能为空。")
             return
 
@@ -675,8 +693,7 @@ class AutoDetectModule:
         entry, has_media = self.plugin.utils.parse_message_to_entry(reply_components)
         reply_entry = await self.plugin.utils.fetch_reply_entry(event)
         entry = self.plugin.utils.merge_entries(entry, reply_entry)
-        merged_has_media = any((entry.get("images"), entry.get("records"), entry.get("videos"), entry.get("ats"), entry.get("faces")))
-        if not entry.get("text") and not merged_has_media:
+        if not self.plugin.utils.entry_has_payload(entry):
             yield event.plain_result("回复内容不能为空。")
             return
 
@@ -764,8 +781,7 @@ class AutoDetectModule:
             entry, has_media = self.plugin.utils.parse_message_to_entry(processed_comps)
             reply_entry = await self.plugin.utils.fetch_reply_entry(event)
             entry = self.plugin.utils.merge_entries(entry, reply_entry)
-            merged_has_media = any((entry.get("images"), entry.get("records"), entry.get("videos"), entry.get("ats"), entry.get("faces")))
-            if not entry.get("text") and not merged_has_media:
+            if not self.plugin.utils.entry_has_payload(entry):
                  yield event.plain_result("回复内容不能为空。")
                  return
             
