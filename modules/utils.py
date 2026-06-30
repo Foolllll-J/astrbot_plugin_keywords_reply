@@ -348,15 +348,26 @@ class PluginUtils:
 
     async def download_image(self, url: str) -> str | None:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
-                        filename = hashlib.md5(content).hexdigest() + ".jpg"
-                        path = os.path.join(self.plugin.image_dir, filename)
-                        with open(path, "wb") as f:
-                            f.write(content)
-                        return path
+            if url.startswith(("http://", "https://")):
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            content = await resp.read()
+                        else:
+                            return None
+            elif os.path.exists(url):
+                with open(url, "rb") as f:
+                    content = f.read()
+            else:
+                return None
+            ext = ".jpg"
+            if not url.startswith(("http://", "https://")):
+                ext = os.path.splitext(url)[1] or ".jpg"
+            filename = hashlib.md5(content).hexdigest() + ext
+            path = os.path.join(self.plugin.image_dir, filename)
+            with open(path, "wb") as f:
+                f.write(content)
+            return path
         except Exception as e:
             logger.error(f"下载图片失败: {e}")
         return None

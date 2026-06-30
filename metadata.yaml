@@ -2,6 +2,6 @@ name: astrbot_plugin_keywords_reply
 display_name: 关键词回复
 short_desc: 支持面板管理和回复富媒体内容
 desc: 支持指令触发与自动监听，可配置正则匹配规则、群聊黑白名单、自动撤回、变量模板，并支持图文、At、QQ表情、语音、视频的关键词回复插件。
-version: v1.4.0
+version: v1.4.1
 author: Foolllll
 repo: https://github.com/Foolllll-J/astrbot_plugin_keywords_reply
