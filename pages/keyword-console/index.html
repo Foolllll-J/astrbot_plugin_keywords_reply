@@ -14,7 +14,21 @@
             <div class="eyebrow">Think it, get it.</div>
             <h1>Keyword Console</h1>
           </div>
-          <button id="refreshBtn" class="icon-button" type="button" aria-label="刷新">刷新</button>
+          <button
+            id="refreshBtn"
+            class="icon-button icon-action"
+            type="button"
+            aria-label="重新载入"
+            title="重新载入"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M20 11a8 8 0 0 0-14.9-4L3 10" />
+              <path d="M3 5v5h5" />
+              <path d="M4 13a8 8 0 0 0 14.9 4L21 14" />
+              <path d="M21 19v-5h-5" />
+            </svg>
+            <span class="sr-only">重新载入</span>
+          </button>
         </div>
 
         <div class="toolbar">
@@ -24,7 +38,47 @@
           </div>
           <div class="toolbar-actions">
             <input id="searchInput" class="text-input" type="search" placeholder="搜索规则" />
-            <button id="newRuleBtn" class="primary-button" type="button">新建规则</button>
+            <button
+              id="newRuleBtn"
+              class="primary-button icon-action"
+              type="button"
+              aria-label="新建规则"
+              title="新建规则"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+              <span class="sr-only">新建规则</span>
+            </button>
+            <button
+              id="selectionModeBtn"
+              class="icon-button icon-action"
+              type="button"
+              aria-label="选择规则"
+              aria-pressed="false"
+              title="选择规则"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <rect x="3.5" y="4" width="4" height="4" rx="0.6" />
+                <rect x="3.5" y="10" width="4" height="4" rx="0.6" />
+                <rect x="3.5" y="16" width="4" height="4" rx="0.6" />
+                <path d="M11 6h9M11 12h9M11 18h9" />
+              </svg>
+              <span class="sr-only">选择规则</span>
+            </button>
+            <button
+              id="selectFilteredBtn"
+              class="primary-button icon-action hidden"
+              type="button"
+              aria-label="全选当前结果"
+              title="全选当前结果"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <rect x="5" y="5" width="14" height="14" rx="2" />
+              </svg>
+              <span class="sr-only">全选当前结果</span>
+            </button>
           </div>
         </div>
 
@@ -39,18 +93,55 @@
 
         <div id="editor" class="editor-content hidden">
           <div class="editor-header">
-            <div>
+            <div class="editor-title-block">
               <div id="editorEyebrow" class="eyebrow">关键词</div>
               <h2 id="editorTitle">未命名规则</h2>
+              <span
+                id="dirtyState"
+                class="dirty-state hidden"
+                role="status"
+                title="当前有未保存修改"
+              >
+                <span class="dirty-dot" aria-hidden="true"></span>
+                未保存
+              </span>
             </div>
             <div class="header-actions">
-              <button id="saveBtn" class="primary-button" type="button">保存全部规则</button>
-              <button id="deleteRuleBtn" class="danger-button" type="button">删除当前规则</button>
+                <button
+                  id="saveBtn"
+                  class="primary-button icon-action"
+                  type="button"
+                  aria-label="保存全部规则"
+                  title="保存全部规则"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M5 4h11l3 3v13H5z" />
+                    <path d="M8 4v6h8V4" />
+                    <path d="M8 20v-6h8v6" />
+                  </svg>
+                  <span class="sr-only">保存全部规则</span>
+                </button>
+                <button
+                  id="deleteRuleBtn"
+                  class="danger-button icon-action"
+                  type="button"
+                  aria-label="删除当前规则"
+                  title="删除当前规则"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M4 7h16" />
+                    <path d="M9 7V4h6v3" />
+                    <path d="M7 7l1 13h8l1-13" />
+                    <path d="M10 11v5M14 11v5" />
+                  </svg>
+                  <span class="sr-only">删除当前规则</span>
+                </button>
             </div>
           </div>
 
           <div id="statusBanner" class="status-banner hidden" role="status" aria-live="polite"></div>
 
+          <div id="normalEditorBody">
           <section class="panel">
             <div class="panel-title">基础信息</div>
             <div class="grid two">
@@ -96,7 +187,18 @@
           <section class="panel">
             <div class="panel-head">
               <div class="panel-title">回复列表</div>
-              <button id="newEntryBtn" class="secondary-button" type="button">新增回复</button>
+              <button
+                id="newEntryBtn"
+                class="icon-button icon-action"
+                type="button"
+                aria-label="新增回复"
+                title="新增回复"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                <span class="sr-only">新增回复</span>
+              </button>
             </div>
             <div id="entryList" class="entry-list"></div>
           </section>
@@ -116,6 +218,47 @@
             <input id="hiddenUploadInput" type="file" class="hidden" />
             <div id="componentList" class="stack-list"></div>
           </section>
+          </div>
+
+          <div id="bulkEditor" class="bulk-editor hidden">
+            <div id="bulkEditForm" class="bulk-edit-form hidden">
+              <section class="panel">
+                <div class="panel-title">生效范围</div>
+                <div class="grid two">
+                  <label class="field">
+                    <span>范围模式</span>
+                    <select id="bulkScopeModeInput" class="text-input">
+                      <option value="unchanged">保持不变</option>
+                      <option value="disabled">全局禁用</option>
+                      <option value="whitelist">白名单</option>
+                      <option value="blacklist">黑名单</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>群号列表</span>
+                    <select id="bulkGroupsModeInput" class="text-input">
+                      <option value="unchanged">保持不变</option>
+                      <option value="set">设置为下方列表</option>
+                      <option value="clear">清空群号</option>
+                    </select>
+                    <textarea
+                      id="bulkGroupsInput"
+                      class="text-area mono"
+                      rows="3"
+                      placeholder="输入群号，支持换行、空格、逗号等分隔"
+                      disabled
+                    ></textarea>
+                  </label>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-title">行为设置</div>
+                <div id="bulkOverrideGrid" class="grid two"></div>
+              </section>
+
+            </div>
+          </div>
         </div>
       </main>
     </div>
