@@ -280,6 +280,41 @@ function draftSnapshot(value) {
   );
 }
 
+function getSavedRules(kind) {
+  try {
+    const saved = JSON.parse(state.savedSnapshot);
+    return Array.isArray(saved?.[kind]) ? saved[kind] : [];
+  } catch {
+    return [];
+  }
+}
+
+function getChangedRuleCount() {
+  let changedCount = 0;
+  for (const kind of ["command_triggered", "auto_detect"]) {
+    const draftRules = getRules(kind);
+    const savedRules = getSavedRules(kind);
+    const savedCounts = new Map();
+    const draftCounts = new Map();
+
+    for (const rule of savedRules) {
+      const key = JSON.stringify(withoutDerivedFields(rule));
+      savedCounts.set(key, (savedCounts.get(key) || 0) + 1);
+    }
+    for (const rule of draftRules) {
+      const key = JSON.stringify(withoutDerivedFields(rule));
+      draftCounts.set(key, (draftCounts.get(key) || 0) + 1);
+    }
+
+    let unchangedCount = 0;
+    for (const [key, count] of draftCounts) {
+      unchangedCount += Math.min(count, savedCounts.get(key) || 0);
+    }
+    changedCount += Math.max(draftRules.length, savedRules.length) - unchangedCount;
+  }
+  return changedCount;
+}
+
 function hasUnsavedChanges() {
   if (!state.draft || !state.savedSnapshot) return false;
   return draftSnapshot(state.draft) !== state.savedSnapshot;
@@ -293,18 +328,13 @@ function renderDirtyState() {
   els.refreshBtn.title = dirty ? "重新载入（将放弃未保存修改）" : "重新载入";
 }
 
-function getTotalRuleCount() {
-  return getRules("command_triggered").length + getRules("auto_detect").length;
-}
-
-function getSaveStatusMessage() {
-  const count = getTotalRuleCount();
-  return `已保存 ${count} 条规则`;
+function getSaveStatusMessage(count = getChangedRuleCount()) {
+  return `已保存 ${count} 条变更规则`;
 }
 
 function getSaveLoadingMessage() {
-  const count = getTotalRuleCount();
-  return count > 1 ? `正在保存全部规则（共 ${count} 条）...` : "正在保存规则...";
+  const count = getChangedRuleCount();
+  return count > 0 ? `正在保存 ${count} 条变更规则...` : "正在保存规则...";
 }
 
 function setStatus(message, tone = "info", autoHide = tone === "success") {
@@ -890,7 +920,6 @@ async function deleteEntry(index) {
     setStatus(TEXT.keepOneEntry, "error", false);
     return;
   }
-  if (!window.confirm("确定删除这条回复吗？")) return;
   rule.entries.splice(index, 1);
   if (state.currentEntryIndex >= rule.entries.length) {
     state.currentEntryIndex = rule.entries.length - 1;
@@ -1312,8 +1341,9 @@ async function postDraft() {
 
 async function saveAll() {
   if (!state.selectionMode) syncCurrentRule();
+  const changedCount = getChangedRuleCount();
   await postDraft();
-  setStatus(getSaveStatusMessage(), "success");
+  setStatus(getSaveStatusMessage(changedCount), "success");
 }
 
 function createRule() {
@@ -1351,7 +1381,6 @@ async function deleteCurrentRule() {
     setStatus(TEXT.deleteDraft, "success");
     return;
   }
-  if (!window.confirm("确定删除当前规则吗？此操作会立即保存。")) return;
   syncCurrentRule();
   rules.splice(state.currentRuleIndex, 1);
   state.currentRuleIndex = Math.min(state.currentRuleIndex, rules.length - 1);
@@ -1370,8 +1399,6 @@ async function deleteSelectedRules() {
     setStatus("请先选择要删除的规则", "error", false);
     return;
   }
-  if (!window.confirm(`确定删除选中的 ${indices.length} 条规则吗？此操作会立即保存。`)) return;
-
   const selectedRules = indices.map((index) => rules[index]);
   const currentRule = getCurrentRule();
   for (const index of [...indices].sort((left, right) => right - left)) {
