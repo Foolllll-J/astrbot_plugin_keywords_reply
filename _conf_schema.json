@@ -65,7 +65,7 @@
     "enable_text_template": {
         "description": "启用文本变量模板",
         "type": "bool",
-        "hint": "开启后，回复文本中的变量会按触发上下文替换。支持 {user_id} {user_name} {group_id} {self_id} {platform} {message} {date} {time} {datetime}。",
+        "hint": "开启后，回复文本中的变量会按触发上下文替换。支持 {user_id} {user_name} {group_id} {self_id} {platform} {message} {date} {time} {datetime}，以及 {countdown:2026-10-02 22:02} 倒计时模板。",
         "default": true
     }
 }
