@@ -379,9 +379,12 @@ class PluginUtils:
                 return match.group(0)
 
             try:
-                target_time = datetime.strptime(
-                    parts[0].replace("T", " "), "%Y-%m-%d %H:%M"
-                )
+                target = parts[0].replace("T", " ")
+                if not re.fullmatch(
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}", target
+                ):
+                    return match.group(0)
+                target_time = datetime.strptime(target, "%Y-%m-%d %H:%M")
             except ValueError:
                 return match.group(0)
 
