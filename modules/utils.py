@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 from datetime import datetime
+from decimal import Decimal
 from urllib.parse import unquote, urlparse
 
 import aiohttp
@@ -318,8 +319,19 @@ class PluginUtils:
             return str(match.group(1)).strip()
         return None
 
-    def build_template_context(self, event: AstrMessageEvent) -> dict:
-        now = datetime.now()
+    def build_template_context(
+        self, event: AstrMessageEvent, now: datetime | None = None
+    ) -> dict:
+        """Build values available to reply text templates.
+
+        Args:
+            event: Event which triggered the reply.
+            now: Shared render time for date, time, and countdown values.
+
+        Returns:
+            Mapping of supported template variables to their values.
+        """
+        now = now or datetime.now()
         sender_name = ""
         try:
             sender_name = event.get_sender_name() or ""
@@ -338,13 +350,81 @@ class PluginUtils:
         }
 
     def render_template_text(self, event: AstrMessageEvent, text: str) -> str:
+        """Render supported variables and countdowns in reply text.
+
+        Args:
+            event: Event which triggered the reply.
+            text: Configured reply text.
+
+        Returns:
+            Reply text with valid template expressions replaced.
+        """
         if not text:
             return text
         if not self.plugin.config.get("enable_text_template", True):
             return text
-        context = self.build_template_context(event)
-        pattern = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
-        return pattern.sub(lambda m: str(context.get(m.group(1), m.group(0))), text)
+        now = datetime.now()
+        context = self.build_template_context(event, now)
+        pattern = re.compile(
+            r"\{(?:(?P<variable>[a-zA-Z_][a-zA-Z0-9_]*)|countdown:(?P<countdown>[^{}]+))\}"
+        )
+
+        def replace_template(match: re.Match) -> str:
+            variable = match.group("variable")
+            if variable:
+                return str(context.get(variable, match.group(0)))
+
+            parts = [part.strip() for part in match.group("countdown").split("|")]
+            if not 1 <= len(parts) <= 3 or not parts[0]:
+                return match.group(0)
+
+            try:
+                target = parts[0].replace("T", " ")
+                if not re.fullmatch(
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}", target
+                ):
+                    return match.group(0)
+                target_time = datetime.strptime(target, "%Y-%m-%d %H:%M")
+            except ValueError:
+                return match.group(0)
+
+            output = parts[1].lower() if len(parts) >= 2 and parts[1] else "duration"
+            if output not in {"duration", "days", "hours", "minutes"}:
+                return match.group(0)
+
+            format_spec = ".2f"
+            if len(parts) == 3:
+                precision_match = re.fullmatch(r"\.(\d{1,2})f", parts[2])
+                if (
+                    output == "duration"
+                    or not precision_match
+                    or int(precision_match.group(1)) > 14
+                ):
+                    return match.group(0)
+                format_spec = parts[2]
+
+            delta = target_time - now
+            total_microseconds = (
+                delta.days * 86_400_000_000
+                + delta.seconds * 1_000_000
+                + delta.microseconds
+            )
+            if output == "duration":
+                total_minutes = abs(total_microseconds) // 60_000_000
+                days, remaining_minutes = divmod(total_minutes, 1_440)
+                hours, minutes = divmod(remaining_minutes, 60)
+                duration = f"{days}天{hours}小时{minutes}分钟"
+                return f"已过去{duration}" if total_microseconds < 0 else duration
+
+            unit_microseconds = {
+                "days": 86_400_000_000,
+                "hours": 3_600_000_000,
+                "minutes": 60_000_000,
+            }[output]
+            value = Decimal(total_microseconds) / Decimal(unit_microseconds)
+            return format(value, format_spec)
+
+        return pattern.sub(replace_template, text)
 
     async def download_image(self, url: str) -> str | None:
         try:
