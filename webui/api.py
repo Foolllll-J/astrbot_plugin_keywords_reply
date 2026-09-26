@@ -7,7 +7,6 @@ import hashlib
 import mimetypes
 import traceback
 from pathlib import Path
-from typing import Any
 
 from astrbot.api import logger
 from quart import jsonify, request, send_file
@@ -79,7 +78,9 @@ class KeywordsReplyWebUIApi:
                     exc,
                     traceback.format_exc(),
                 )
-                return jsonify({"status": "error", "message": "保存失败，请检查输入后重试。"})
+                return jsonify(
+                    {"status": "error", "message": "保存失败，请检查输入后重试。"}
+                )
 
         return wrapped
 
@@ -111,12 +112,16 @@ class KeywordsReplyWebUIApi:
         keywords = payload.get("keywords")
         if kind not in {"command_triggered", "auto_detect"}:
             raise ValueError("不支持的规则类型")
-        if not isinstance(keywords, list) or any(not str(keyword or "").strip() for keyword in keywords):
+        if not isinstance(keywords, list) or any(
+            not str(keyword or "").strip() for keyword in keywords
+        ):
             raise ValueError("缺少有效的排序列表")
 
         normalized_keywords = [str(keyword).strip() for keyword in keywords]
         current_rules = list(self.plugin.data.get(kind, []) or [])
-        current_keywords = [str(rule.get("keyword", "")).strip() for rule in current_rules]
+        current_keywords = [
+            str(rule.get("keyword", "")).strip() for rule in current_rules
+        ]
         if (
             len(normalized_keywords) != len(current_keywords)
             or len(set(normalized_keywords)) != len(normalized_keywords)
@@ -124,8 +129,12 @@ class KeywordsReplyWebUIApi:
         ):
             raise ValueError("排序对象与当前数据不一致，请刷新后重试")
 
-        rules_by_keyword = {str(rule.get("keyword", "")).strip(): rule for rule in current_rules}
-        self.plugin.data[kind] = [rules_by_keyword[keyword] for keyword in normalized_keywords]
+        rules_by_keyword = {
+            str(rule.get("keyword", "")).strip(): rule for rule in current_rules
+        }
+        self.plugin.data[kind] = [
+            rules_by_keyword[keyword] for keyword in normalized_keywords
+        ]
         await self.plugin.utils.save_data_async()
         return jsonify({"ok": True, "keywords": normalized_keywords})
 
@@ -153,9 +162,7 @@ class KeywordsReplyWebUIApi:
         digest = hashlib.md5(
             f"{original_filename}-{datetime.datetime.now().timestamp()}".encode("utf-8")
         ).hexdigest()[:8]
-        filename = (
-            f"{component_type}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{digest}{suffix}"
-        )
+        filename = f"{component_type}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{digest}{suffix}"
         target_path = target_dir / filename
         await file.save(target_path)
         return jsonify(

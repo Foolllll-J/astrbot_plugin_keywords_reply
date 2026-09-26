@@ -160,7 +160,11 @@ def _serialize_override_value(
 
 def _serialize_rule(plugin: Any, rule: dict[str, Any], kind: str) -> dict[str, Any]:
     overrides = {}
-    field_mapping = KEYWORD_OVERRIDE_FIELDS if kind == "command_triggered" else DETECT_OVERRIDE_FIELDS
+    field_mapping = (
+        KEYWORD_OVERRIDE_FIELDS
+        if kind == "command_triggered"
+        else DETECT_OVERRIDE_FIELDS
+    )
     for field_name, stored_name in field_mapping:
         overrides[field_name] = _serialize_override_value(
             plugin, rule, kind, field_name, stored_name
@@ -172,7 +176,9 @@ def _serialize_rule(plugin: Any, rule: dict[str, Any], kind: str) -> dict[str, A
         "enabled": bool(rule.get("enabled", True)),
         "mode": str(rule.get("mode", "whitelist") or "whitelist"),
         "groups": _clean_group_ids(rule.get("groups", [])),
-        "entries": [_build_entry_payload(entry) for entry in rule.get("entries", []) or []],
+        "entries": [
+            _build_entry_payload(entry) for entry in rule.get("entries", []) or []
+        ],
         "overrides": overrides,
     }
 
@@ -209,7 +215,9 @@ def build_plugin_state_payload(plugin: Any) -> dict[str, Any]:
     }
 
 
-def _sanitize_components(components: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+def _sanitize_components(
+    components: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
     sanitized: list[dict[str, Any]] = []
     for item in components or []:
         item_type = str(item.get("type", "") or "").strip().lower()
@@ -321,14 +329,22 @@ def _sanitize_rule(rule: dict[str, Any], kind: str) -> dict[str, Any]:
         raise ValueError(f"规则 '{keyword}' 至少需要一条非空回复")
 
     overrides = rule.get("overrides", {}) or {}
-    field_mapping = KEYWORD_OVERRIDE_FIELDS if kind == "command_triggered" else DETECT_OVERRIDE_FIELDS
+    field_mapping = (
+        KEYWORD_OVERRIDE_FIELDS
+        if kind == "command_triggered"
+        else DETECT_OVERRIDE_FIELDS
+    )
     for field_name, stored_name in field_mapping:
         if field_name not in overrides:
             continue
         if field_name in {"recall_delay", "cooldown"}:
-            value = _sanitize_override_value(overrides.get(field_name), value_type="int")
+            value = _sanitize_override_value(
+                overrides.get(field_name), value_type="int"
+            )
         else:
-            value = _sanitize_override_value(overrides.get(field_name), value_type="bool")
+            value = _sanitize_override_value(
+                overrides.get(field_name), value_type="bool"
+            )
         if field_name == "case_sensitive" and kind == "auto_detect":
             sanitized["case_sensitive_override"] = value
         else:

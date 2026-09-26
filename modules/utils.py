@@ -11,8 +11,18 @@ from urllib.parse import unquote, urlparse
 import aiohttp
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageEventResult, MessageChain
-from astrbot.api.message_components import At, Face, Image, Node, Nodes, Plain, Record, Reply, Video
+from astrbot.api.event import AstrMessageEvent, MessageEventResult
+from astrbot.api.message_components import (
+    At,
+    Face,
+    Image,
+    Node,
+    Nodes,
+    Plain,
+    Record,
+    Reply,
+    Video,
+)
 from ..webui.payloads import get_effective_bool
 
 
@@ -141,7 +151,9 @@ class PluginUtils:
         except Exception as e:
             logger.error(f"清理未引用媒体文件失败: {e}")
 
-    def permission_denied_result(self, event: AstrMessageEvent, message: str = "权限不足。"):
+    def permission_denied_result(
+        self, event: AstrMessageEvent, message: str = "权限不足。"
+    ):
         if self.plugin.config.get("notify_permission_denied", True):
             return event.plain_result(message)
         return None
@@ -193,7 +205,9 @@ class PluginUtils:
         adapter_name = self.get_platform_adapter_name(platform_id).lower()
         platform_name = str(event.get_platform_name() or "").lower()
         candidates = {adapter_name, platform_name, str(platform_id or "").lower()}
-        return any(name in {"aiocqhttp", "onebot", "napcat"} for name in candidates if name)
+        return any(
+            name in {"aiocqhttp", "onebot", "napcat"} for name in candidates if name
+        )
 
     def should_use_forwarded_replies(
         self,
@@ -229,7 +243,9 @@ class PluginUtils:
                 return []
         return []
 
-    async def get_forward_bot_identity(self, event: AstrMessageEvent) -> tuple[int, str]:
+    async def get_forward_bot_identity(
+        self, event: AstrMessageEvent
+    ) -> tuple[int, str]:
         platform_id = event.get_platform_id()
         cache_key = str(platform_id or "")
         cached = self._forward_bot_info.get(cache_key)
@@ -238,7 +254,11 @@ class PluginUtils:
 
         bot = getattr(event, "bot", None)
         if bot is None:
-            platform_inst = self.plugin.context.get_platform_inst(platform_id) if platform_id else None
+            platform_inst = (
+                self.plugin.context.get_platform_inst(platform_id)
+                if platform_id
+                else None
+            )
             if platform_inst is not None:
                 if hasattr(platform_inst, "get_client"):
                     try:
@@ -251,12 +271,17 @@ class PluginUtils:
         if bot is None:
             for platform_inst in self._get_platform_instances():
                 try:
-                    meta = platform_inst.meta() if hasattr(platform_inst, "meta") else None
+                    meta = (
+                        platform_inst.meta() if hasattr(platform_inst, "meta") else None
+                    )
                     meta_id = str(getattr(meta, "id", "") or "")
                     meta_name = str(getattr(meta, "name", "") or "").lower()
                     if platform_id and meta_id != str(platform_id):
                         continue
-                    if platform_id or any(token in meta_name for token in ("qq", "onebot", "aiocqhttp", "napcat")):
+                    if platform_id or any(
+                        token in meta_name
+                        for token in ("qq", "onebot", "aiocqhttp", "napcat")
+                    ):
                         if hasattr(platform_inst, "get_client"):
                             bot = platform_inst.get_client()
                         elif hasattr(platform_inst, "bot"):
@@ -272,7 +297,9 @@ class PluginUtils:
             try:
                 info = await bot.get_login_info()
                 self_id = int(info.get("user_id") or 0)
-                node_name = str(info.get("nickname") or info.get("user_name") or node_name)
+                node_name = str(
+                    info.get("nickname") or info.get("user_name") or node_name
+                )
             except Exception as exc:
                 logger.debug(f"获取 QQ 合并转发 bot 信息失败: {exc}")
 
@@ -289,11 +316,19 @@ class PluginUtils:
     def extract_reply_message_id(self, event: AstrMessageEvent) -> str | None:
         try:
             message_obj = getattr(event, "message_obj", None)
-            segments = getattr(message_obj, "message", None) if message_obj is not None else None
+            segments = (
+                getattr(message_obj, "message", None)
+                if message_obj is not None
+                else None
+            )
             if isinstance(segments, list):
                 for seg in segments:
                     if seg.__class__.__name__ == "Reply":
-                        seg_id = str(getattr(seg, "id", "") or getattr(seg, "message_id", "") or "").strip()
+                        seg_id = str(
+                            getattr(seg, "id", "")
+                            or getattr(seg, "message_id", "")
+                            or ""
+                        ).strip()
                         if seg_id:
                             return seg_id
         except Exception:
@@ -301,13 +336,24 @@ class PluginUtils:
 
         try:
             message_obj = getattr(event, "message_obj", None)
-            raw_message = getattr(message_obj, "raw_message", None) if message_obj is not None else None
-            raw_segments = raw_message.get("message") if isinstance(raw_message, dict) else None
+            raw_message = (
+                getattr(message_obj, "raw_message", None)
+                if message_obj is not None
+                else None
+            )
+            raw_segments = (
+                raw_message.get("message") if isinstance(raw_message, dict) else None
+            )
             if isinstance(raw_segments, list):
                 for seg in raw_segments:
-                    if isinstance(seg, dict) and str(seg.get("type", "")).lower() == "reply":
+                    if (
+                        isinstance(seg, dict)
+                        and str(seg.get("type", "")).lower() == "reply"
+                    ):
                         data = seg.get("data", {}) or {}
-                        seg_id = str(data.get("id", "") or data.get("message_id", "") or "").strip()
+                        seg_id = str(
+                            data.get("id", "") or data.get("message_id", "") or ""
+                        ).strip()
                         if seg_id:
                             return seg_id
         except Exception:
@@ -486,9 +532,14 @@ class PluginUtils:
                 "record": ".amr",
                 "video": ".mp4",
             }.get(media_type, "")
-            filename = hashlib.md5(
-                f"{media_type}:{datetime.now().timestamp()}:{source_path}".encode("utf-8")
-            ).hexdigest() + suffix
+            filename = (
+                hashlib.md5(
+                    f"{media_type}:{datetime.now().timestamp()}:{source_path}".encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                + suffix
+            )
             base_dir = {
                 "image": self.plugin.image_dir,
                 "record": self.plugin.record_dir,
@@ -566,7 +617,7 @@ class PluginUtils:
 
         for match in self._mention_pattern.finditer(text):
             if match.start() > last_end:
-                text_parts.append(text[last_end:match.start()])
+                text_parts.append(text[last_end : match.start()])
 
             inline_ats.append({"qq": match.group(1), "all": False})
             last_end = match.end()
@@ -664,21 +715,33 @@ class PluginUtils:
             elif seg_type == "image":
                 source = str(data.get("file", "") or "").strip()
                 url = str(data.get("url", "") or "").strip()
-                resolved_url = url or (source if source.startswith(("http://", "https://")) else None)
+                resolved_url = url or (
+                    source if source.startswith(("http://", "https://")) else None
+                )
                 resolved_path = None if resolved_url else (source or None)
-                entry["images"].append({"file": source or None, "url": resolved_url, "path": resolved_path})
+                entry["images"].append(
+                    {"file": source or None, "url": resolved_url, "path": resolved_path}
+                )
             elif seg_type == "record":
                 source = str(data.get("file", "") or "").strip()
                 url = str(data.get("url", "") or "").strip()
-                resolved_url = url or (source if source.startswith(("http://", "https://")) else None)
+                resolved_url = url or (
+                    source if source.startswith(("http://", "https://")) else None
+                )
                 resolved_path = None if resolved_url else (source or None)
-                entry["records"].append({"file": source or None, "url": resolved_url, "path": resolved_path})
+                entry["records"].append(
+                    {"file": source or None, "url": resolved_url, "path": resolved_path}
+                )
             elif seg_type == "video":
                 source = str(data.get("file", "") or "").strip()
                 url = str(data.get("url", "") or "").strip()
-                resolved_url = url or (source if source.startswith(("http://", "https://")) else None)
+                resolved_url = url or (
+                    source if source.startswith(("http://", "https://")) else None
+                )
                 resolved_path = None if resolved_url else (source or None)
-                entry["videos"].append({"file": source or None, "url": resolved_url, "path": resolved_path})
+                entry["videos"].append(
+                    {"file": source or None, "url": resolved_url, "path": resolved_path}
+                )
             elif seg_type == "forward":
                 forward_id = str(
                     data.get("id", "")
@@ -708,12 +771,18 @@ class PluginUtils:
             return empty_entry
 
         try:
-            original_msg = await api.call_action("get_msg", message_id=int(reply_message_id))
+            original_msg = await api.call_action(
+                "get_msg", message_id=int(reply_message_id)
+            )
         except Exception as exc:
-            logger.warning(f"获取引用消息失败: message_id={reply_message_id}, error={exc}")
+            logger.warning(
+                f"获取引用消息失败: message_id={reply_message_id}, error={exc}"
+            )
             return empty_entry
 
-        message_segments = original_msg.get("message") if isinstance(original_msg, dict) else None
+        message_segments = (
+            original_msg.get("message") if isinstance(original_msg, dict) else None
+        )
         if not isinstance(message_segments, list):
             return empty_entry
 
@@ -807,12 +876,16 @@ class PluginUtils:
 
         return {
             "text": merged_text,
-            "images": list(primary.get("images", [])) + list(secondary.get("images", [])),
-            "records": list(primary.get("records", [])) + list(secondary.get("records", [])),
-            "videos": list(primary.get("videos", [])) + list(secondary.get("videos", [])),
+            "images": list(primary.get("images", []))
+            + list(secondary.get("images", [])),
+            "records": list(primary.get("records", []))
+            + list(secondary.get("records", [])),
+            "videos": list(primary.get("videos", []))
+            + list(secondary.get("videos", [])),
             "ats": list(primary.get("ats", [])) + list(secondary.get("ats", [])),
             "faces": list(primary.get("faces", [])) + list(secondary.get("faces", [])),
-            "forwards": list(primary.get("forwards", [])) + list(secondary.get("forwards", [])),
+            "forwards": list(primary.get("forwards", []))
+            + list(secondary.get("forwards", [])),
         }
 
     def summarize_entry_for_list(self, entry: dict, max_text: int = 30) -> str:
@@ -833,7 +906,9 @@ class PluginUtils:
             return "".join(placeholders)
         return f"{summary}{''.join(placeholders)}"
 
-    def build_entry_placeholder_text(self, entry: dict, include_images: bool = True) -> str:
+    def build_entry_placeholder_text(
+        self, entry: dict, include_images: bool = True
+    ) -> str:
         lines = []
         if entry.get("text"):
             lines.append(entry["text"])
@@ -984,7 +1059,9 @@ class PluginUtils:
 
         bot = getattr(event, "bot", None)
         if bot is None:
-            platform_inst = self.plugin.context.get_platform_inst(event.get_platform_id())
+            platform_inst = self.plugin.context.get_platform_inst(
+                event.get_platform_id()
+            )
             if platform_inst is not None:
                 if hasattr(platform_inst, "get_client"):
                     try:
@@ -1025,7 +1102,12 @@ class PluginUtils:
         if raw.startswith("file://"):
             parsed = urlparse(raw)
             path = unquote(parsed.path or "")
-            if os.name == "nt" and path.startswith("/") and len(path) > 2 and path[2] == ":":
+            if (
+                os.name == "nt"
+                and path.startswith("/")
+                and len(path) > 2
+                and path[2] == ":"
+            ):
                 path = path[1:]
             abs_path = os.path.abspath(path)
             return f"file:///{abs_path.replace(os.sep, '/')}"
@@ -1040,7 +1122,9 @@ class PluginUtils:
         entry: dict,
         render_template: bool = False,
     ):
-        placeholder_text = self.build_entry_placeholder_text(entry, include_images=False)
+        placeholder_text = self.build_entry_placeholder_text(
+            entry, include_images=False
+        )
         preview_text = intro if intro.endswith("\n") else f"{intro}\n"
         if placeholder_text:
             preview_text = f"{preview_text}{placeholder_text}"
@@ -1056,7 +1140,9 @@ class PluginUtils:
             "ats": entry.get("ats", []),
             "faces": entry.get("faces", []),
         }
-        res_obj = self.get_reply_result(event, preview_entry, use_quote=False, render_template=render_template)
+        res_obj = self.get_reply_result(
+            event, preview_entry, use_quote=False, render_template=render_template
+        )
         if res_obj and res_obj.chain:
             yield res_obj
         else:
@@ -1085,7 +1171,9 @@ class PluginUtils:
         entry: dict,
         render_template: bool = False,
     ):
-        placeholder_text = self.build_entry_placeholder_text(entry, include_images=False)
+        placeholder_text = self.build_entry_placeholder_text(
+            entry, include_images=False
+        )
         preview_text = intro if intro.endswith("\n") else f"{intro}\n"
         if placeholder_text:
             preview_text = f"{preview_text}{placeholder_text}"
@@ -1101,7 +1189,9 @@ class PluginUtils:
             "ats": entry.get("ats", []),
             "faces": entry.get("faces", []),
         }
-        return self.get_reply_result(event, preview_entry, use_quote=False, render_template=render_template)
+        return self.get_reply_result(
+            event, preview_entry, use_quote=False, render_template=render_template
+        )
 
     def build_entry_preview_text(
         self,
@@ -1112,9 +1202,13 @@ class PluginUtils:
     ) -> str:
         placeholder_entry = dict(entry)
         if render_template and placeholder_entry.get("text"):
-            placeholder_entry["text"] = self.render_template_text(event, placeholder_entry["text"])
+            placeholder_entry["text"] = self.render_template_text(
+                event, placeholder_entry["text"]
+            )
 
-        placeholder_text = self.build_entry_placeholder_text(placeholder_entry, include_images=False)
+        placeholder_text = self.build_entry_placeholder_text(
+            placeholder_entry, include_images=False
+        )
         preview_text = intro if intro.endswith("\n") else f"{intro}\n"
         if placeholder_text:
             preview_text = f"{preview_text}{placeholder_text}"
@@ -1154,7 +1248,9 @@ class PluginUtils:
                 pending_text_parts.append(rich_separator)
                 flush_pending_text()
 
-                preview_result = self.build_entry_preview_result(event, intro, entry, render_template=render_template)
+                preview_result = self.build_entry_preview_result(
+                    event, intro, entry, render_template=render_template
+                )
                 if preview_result and preview_result.chain:
                     chain.extend(preview_result.chain)
                 else:
@@ -1197,28 +1293,63 @@ class PluginUtils:
                     message = []
                     for comp in chunk:
                         if isinstance(comp, Plain):
-                            message.append({"type": "text", "data": {"text": comp.text}})
+                            message.append(
+                                {"type": "text", "data": {"text": comp.text}}
+                            )
                         elif isinstance(comp, At):
                             message.append({"type": "at", "data": {"qq": str(comp.qq)}})
                         elif isinstance(comp, Face):
                             message.append({"type": "face", "data": {"id": comp.id}})
                         elif isinstance(comp, Image):
                             if comp.file:
-                                message.append({"type": "image", "data": {"file": self._component_file_to_onebot_file(comp.file)}})
+                                message.append(
+                                    {
+                                        "type": "image",
+                                        "data": {
+                                            "file": self._component_file_to_onebot_file(
+                                                comp.file
+                                            )
+                                        },
+                                    }
+                                )
                             elif comp.url:
-                                message.append({"type": "image", "data": {"file": comp.url}})
+                                message.append(
+                                    {"type": "image", "data": {"file": comp.url}}
+                                )
                         elif isinstance(comp, Record):
-                            message.append({"type": "record", "data": {"file": self._component_file_to_onebot_file(comp.file)}})
+                            message.append(
+                                {
+                                    "type": "record",
+                                    "data": {
+                                        "file": self._component_file_to_onebot_file(
+                                            comp.file
+                                        )
+                                    },
+                                }
+                            )
                         elif isinstance(comp, Video):
-                            message.append({"type": "video", "data": {"file": self._component_file_to_onebot_file(comp.file)}})
+                            message.append(
+                                {
+                                    "type": "video",
+                                    "data": {
+                                        "file": self._component_file_to_onebot_file(
+                                            comp.file
+                                        )
+                                    },
+                                }
+                            )
                         elif isinstance(comp, Reply):
                             message.append({"type": "reply", "data": {"id": comp.id}})
 
                     if group_id:
-                        ret = await client.api.call_action("send_group_msg", group_id=int(group_id), message=message)
+                        ret = await client.api.call_action(
+                            "send_group_msg", group_id=int(group_id), message=message
+                        )
                     else:
                         actual_delay = min(delay, 115) if delay >= 120 else delay
-                        ret = await client.api.call_action("send_private_msg", user_id=int(user_id), message=message)
+                        ret = await client.api.call_action(
+                            "send_private_msg", user_id=int(user_id), message=message
+                        )
                         delay = actual_delay
                     sent_any = True
                     message_id = ret.get("message_id")
@@ -1237,7 +1368,9 @@ class PluginUtils:
                     try:
                         await asyncio.sleep(delay)
                         for message_id in message_ids:
-                            await client.api.call_action("delete_msg", message_id=message_id)
+                            await client.api.call_action(
+                                "delete_msg", message_id=message_id
+                            )
                     except Exception as e:
                         logger.error(f"撤回消息失败: {e}")
                 return
@@ -1285,7 +1418,9 @@ class PluginUtils:
 
             bot = getattr(event, "bot", None)
             if bot is None:
-                platform_inst = self.plugin.context.get_platform_inst(event.get_platform_id())
+                platform_inst = self.plugin.context.get_platform_inst(
+                    event.get_platform_id()
+                )
                 if platform_inst is not None:
                     if hasattr(platform_inst, "get_client"):
                         try:

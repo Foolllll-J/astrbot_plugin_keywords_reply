@@ -1,5 +1,5 @@
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star, register, StarTools
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.api import logger
 import os
 import asyncio
@@ -10,6 +10,7 @@ from .modules.utils import PluginUtils
 from .webui.api import KeywordsReplyWebUIApi
 from .webui.payloads import get_effective_recall_delay
 
+
 class KeywordsReplyPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -19,11 +20,11 @@ class KeywordsReplyPlugin(Star):
         self.record_dir = os.path.join(self.data_dir, "records")
         self.video_dir = os.path.join(self.data_dir, "videos")
         self.data_file = os.path.join(self.data_dir, "keywords.json")
-        
+
         os.makedirs(self.image_dir, exist_ok=True)
         os.makedirs(self.record_dir, exist_ok=True)
         os.makedirs(self.video_dir, exist_ok=True)
-        
+
         self._save_lock = asyncio.Lock()
         self._regex_cache = {}
         self.utils = PluginUtils(self)
@@ -33,7 +34,7 @@ class KeywordsReplyPlugin(Star):
         self.detect_module = AutoDetectModule(self)
         self.webui_api = KeywordsReplyWebUIApi(self)
         self.webui_api.register()
-        
+
     @filter.command("添加关键词")
     async def add_keyword_cmd(self, event: AstrMessageEvent):
         """添加新关键词和回复。用法: /添加关键词 <关键词> <回复内容>"""
@@ -258,12 +259,26 @@ class KeywordsReplyPlugin(Star):
     async def on_message(self, event: AstrMessageEvent):
         """处理所有消息事件，包括命令触发和自动检测。"""
         msg = event.message_str.strip()
-        if not msg: return
-        
-        management_prefixes = ["/添加", "/编辑", "/删除", "/启用", "/禁用", "/查看", "添加", "编辑", "删除", "启用", "禁用", "查看"]
+        if not msg:
+            return
+
+        management_prefixes = [
+            "/添加",
+            "/编辑",
+            "/删除",
+            "/启用",
+            "/禁用",
+            "/查看",
+            "添加",
+            "编辑",
+            "删除",
+            "启用",
+            "禁用",
+            "查看",
+        ]
         if any(msg.startswith(p) for p in management_prefixes):
             return
-            
+
         recall_delay = self.config.get("recall_delay", "0 0").split()
         kw_delay = int(recall_delay[0]) if len(recall_delay) > 0 else 0
         dt_delay = int(recall_delay[1]) if len(recall_delay) > 1 else 0
